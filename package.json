@@ -1,0 +1,18 @@
+{
+    "name": "ankusha",
+    "version": "1.0.0",
+    "description": "A Clojure library designed to ... well, that part is up to you.",
+    "main": "app.js",
+    "directories": {
+        "doc": "doc",
+        "test": "test"
+    },
+    "dependencies": {
+        "pg": "latest"
+    },
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "author": "",
+    "license": "ISC"
+}
