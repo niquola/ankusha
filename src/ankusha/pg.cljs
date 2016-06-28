@@ -1,10 +1,8 @@
 (ns ankusha.pg
   (:require-macros [cljs.core.async.macros :as m :refer [go alt!]])
-  (:require [reagent.core :as reagent]
-            [cljs.core.async :as async]
+  (:require [cljs.core.async :as async]
             [clojure.walk :as walk]
             [honeysql.core :as hsql]
-            [pgtron.state :as state]
             [cljs.nodejs :as node]))
 
 (node/enable-util-print!)
@@ -12,7 +10,7 @@
 (def pg (node/require "pg"))
 (def Client (.-Client pg))
 
-(def conn "postgres://crudtest:crudtest@localhost/")
+(def conn "postgres://nicola:nicola@localhost:5432/postgres")
 
 (def hsql-macros
   {:$call hsql/call
@@ -43,33 +41,27 @@
          (do (async/put! ch {:error err}) (.log js/console "Error" err)))))
     ch))
 
+(hsql/format (honey-macro {:select [[:$raw "1::text"]]}))
 
 (defn exec [sql]
-  (let [cs (:connection-string  conn)
-        _ (println "Connect on " cs)
-        sql (if (map? sql) (hsql/format (honey-macro sql) :parameterizer :postgresql) [sql])
+  (let [sql (if (map? sql) (hsql/format (honey-macro sql) :parameterizer :postgresql) [sql])
+        _ (println "SQL:" sql)
         ch (async/chan)
-        cl (Client. (str cs))]
+        cl (Client. conn)]
+    (println "Connect on " conn)
     (println "SQL:" sql)
-    (.connect
-     cl
-     (fn [err]
-       (when err
-         (.log js/console "Error" err))
-       (when (not err)
-         (.log js/console sql)
-         (.query cl (first sql) (clj->js (rest sql))
-                 (fn [err res]
-                   (if err
-                     (.error js/console err)
-                     (async/put! ch (.-rows res)))
-                   (.end cl))))))
+    (.connect cl (fn [err]
+       (if err (.log js/console "Error" err)
+           (.query cl (first sql) (clj->js (rest sql))
+                   (fn [err res]
+                     (if err
+                       (.error js/console "Error" err)
+                       (async/put! ch (.-rows res)))
+                     (.end cl))))))
     ch))
 
 (comment
-
   (go
-    (println
-     (<! (raw-exec
-          "postgres://nicola:nicola@localhost:5432/postgres"
-          "SELECT 1")))))
+    (let [res (<! (exec {:select [1]}))]
+      (.log js/console res)))
+  )

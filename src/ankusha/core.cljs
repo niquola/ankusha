@@ -1,10 +1,12 @@
 (ns ankusha.core
-  (:require [cljs.nodejs :as node]))
+  (:require-macros [cljs.core.async.macros :as m :refer [go alt!]])
+  (:require [cljs.nodejs :as node]
+            [cljs.core.async :as async]
+            [ankusha.pg :as pg]))
 
 (node/enable-util-print!)
 
 (def proc (node/require "child_process"))
-
 
 (defn exec [cmd & args]
   (let [p (.spawn proc cmd (clj->js args))]
@@ -14,7 +16,10 @@
 
 (defn -main []
   (.log js/console "Hello all")
-  (exec "ls" "-lah"))
+  (exec "ls" "-lah")
+  (go
+    (let [res (<! (pg/exec {:select [1]}))]
+      (.log js/console res))))
 
 (set! *main-cli-fn* -main)
 
@@ -26,4 +31,5 @@
     (println "shared-buffers " (:shared-buffers cfg))))
 
 (comment
-  (generate-config pg-config))
+  (-main)
+  )
