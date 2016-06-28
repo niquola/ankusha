@@ -2,6 +2,7 @@
   (:require-macros [cljs.core.async.macros :as m :refer [go alt!]])
   (:require [cljs.nodejs :as node]
             [cljs.core.async :as async]
+            [ankusha.consul :as consul]
             [ankusha.pg :as pg]))
 
 (node/enable-util-print!)
@@ -19,7 +20,8 @@
   (exec "ls" "-lah")
   (go
     (let [res (<! (pg/exec {:select [1]}))]
-      (.log js/console res))))
+      (.log js/console res)))
+  (consul/start))
 
 (set! *main-cli-fn* -main)
 

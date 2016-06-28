@@ -2,18 +2,15 @@
   (:require-macros [cljs.core.async.macros :as m :refer [go alt!]])
   (:require [cljs.core.async :as async]
             [clojure.walk :as walk]
-            [honeysql.helpers :as h]
             [honeysql.core :as hsql]
+            [honeysql.helpers :as h]
             [cljs.nodejs :as node]))
 
 (node/enable-util-print!)
 
-(h/select {:from [:user]})
+(def Client (node/require "pg-native"))
 
-(def pg (node/require "pg"))
-(def Client (.-Client pg))
-
-(def conn "postgres://nicola:nicola@localhost:5432/postgres")
+#_(def Client (.-Client pg))
 
 (def hsql-macros
   {:$call hsql/call
@@ -30,42 +27,35 @@
 (defn raw-exec [conn sql]
   (println "Try to connect" conn)
   (let [ch (async/chan)
-        cl (Client. conn)]
+        sql (if (vector? sql) sql [sql])
+        cl (Client.)]
     (.connect
-     cl
+     cl conn
      (fn [err]
        (when err (async/put! ch {:error err}) (.log js/console "Error" err))
        (if (not err)
-         (.query cl sql
+         (.query cl (first sql) (clj->js (rest sql))
                  (fn [err res]
-                   (if err (.error js/console err)
-                       (async/put! ch (.-rows res)))
+                   (if err (.error js/console "QUERY ERROR:" err)
+                       (async/put! ch (js->clj res)))
                    (.end cl)))
-         (do (async/put! ch {:error err}) (.log js/console "Error" err)))))
+         (do (async/put! ch {:error err})
+             (.log js/console "CONNECTION ERROR:" err)))))
     ch))
 
 (hsql/format (honey-macro {:select [[:$raw "1::text"]]}))
 
-
-(defn exec [sql]
-  (let [sql (if (map? sql) (hsql/format (honey-macro sql) :parameterizer :postgresql) [sql])
-        _ (println "SQL:" sql)
-        ch (async/chan)
-        cl (Client. conn)]
-    (println "Connect on " conn)
-    (println "SQL:" sql)
-    (.connect cl (fn [err]
-       (if err (.log js/console "Error" err)
-           (.query cl (first sql) (clj->js (rest sql))
-                   (fn [err res]
-                     (if err
-                       (.error js/console "Error" err)
-                       (async/put! ch (.-rows res)))
-                     (.end cl))))))
-    ch))
+(defn exec [conn sql]
+  (raw-exec conn (if (map? sql)
+                   (hsql/format (honey-macro sql) :parameterizer :postgresql)
+                   [sql])))
 
 (comment
-  (go
-    (let [res (<! (exec {:select [1]}))]
-      (.log js/console res)))
+
+  (let [conn "postgres:///postgres?host=/tmp/cluster-1&port=5434"]
+    (go (println (async/<! (exec conn {:select [1]})))))
+
+  (let [conn "postgres:///postgres?host=/tmp/cluster-1&port=5434"]
+    (go (println (async/<! (raw-exec conn ["SELECT 1"])))))
+
   )
