@@ -2,10 +2,13 @@
   (:require-macros [cljs.core.async.macros :as m :refer [go alt!]])
   (:require [cljs.core.async :as async]
             [clojure.walk :as walk]
+            [honeysql.helpers :as h]
             [honeysql.core :as hsql]
             [cljs.nodejs :as node]))
 
 (node/enable-util-print!)
+
+(h/select {:from [:user]})
 
 (def pg (node/require "pg"))
 (def Client (.-Client pg))
@@ -42,6 +45,7 @@
     ch))
 
 (hsql/format (honey-macro {:select [[:$raw "1::text"]]}))
+
 
 (defn exec [sql]
   (let [sql (if (map? sql) (hsql/format (honey-macro sql) :parameterizer :postgresql) [sql])
