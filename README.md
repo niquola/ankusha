@@ -52,7 +52,15 @@ ankusha schedule switchover 'every week'
 
 ```
 
+## Design ideas
 
+* anku is agent running on every node
+* anku supervises postgresql backend
+* anku manages configuration of postgresql, streaming replication and log shipping
+* anku agents are in consensus cluster providing automatic failover
+* anku has REST API as primary interface to manage/discover cluster 
+* anku cloud aware (especially aws)
+* anku could be packed as docker image
 
 ## License
 
