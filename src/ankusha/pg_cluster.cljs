@@ -3,183 +3,151 @@
   (:require [cljs.nodejs :as node]
             [clojure.string :as str]
             [ankusha.shell :as shell]
+            [ankusha.pg-config :as pg-config]
             [ankusha.pg :as pg]
             [cljs.core.async :as async :refer [<!]]))
 
 (def proc (node/require "child_process"))
 
-(defonce settings (atom {:bin "/usr/lib/postgresql/9.5/bin"}))
+(defonce state (atom {:bin "/usr/lib/postgresql/9.5/bin"
+                      :nodes {}}))
 
-(defn bin [util] (str (:bin @settings) "/" util))
+(defn bin [util] (str (:bin @state) "/" util))
 
-(defonce pg-proc (atom nil))
-(defonce pg-on-exit (atom nil))
+(defn node-config [opts]
+  {:data-dir (:data-dir opts)
+   :port (:port opts)
+   :hba [[:local :all :all :trust]
+         [:local :replication :nicola :trust]
+         [:host  :replication :nicola "127.0.0.1/32" :trust]
+         [:host :all :all "0.0.0.0/0" :md5]]
+   :config {:max_connections 100
+            :listen_addresses "*"
+            :unix_socket_directories (:data-dir opts)
 
-(def config {:data-dir "/tmp/cluster-1"
-             :hba [[:local :all :all :trust]
-                   [:local :replication :nicola :trust]
-                   [:host  :replication :nicola "127.0.0.1/32" :trust]
-                   [:host :all :all "0.0.0.0/0" :md5]]
-             :config {:max_connections 100
-                      :listen_addresses "*"
-                      :unix_socket_directories "/tmp/cluster-1"
+            :wal_level "logical"
+            :hot_standby "on"
+            :archive_mode "on"
+            :archive_command "cp %p /tmp/wallogs/%p" 
+            :archive_timeout 60
+            :max_wal_senders 2
+            :wal_keep_segments 100
 
-                      :wal_level "logical"
-                      :archive_mode "on"
-                      :archive_command "rm -rf %p" 
-                      :archive_timeout 60
-                      :max_wal_senders 2
+            :shared_buffers  "128MB"
+            :log_line_prefix  (str (:name opts) ": ")
 
-                      :shared_buffers  "128MB"
-                      :port "5434"}})
+            :port (:port opts)}})
 
-(defn mk-config [cfg]
-  (with-out-str
-    (doseq [[k v] (:config cfg)]
-      (println (name k) " = " (if (string? v) (str "'" v "'") v)))))
+(defn pg_ctl [cfg cmd]
+  (shell/spawn (bin "pg_ctl") {:-D (:data-dir cfg) :-l (str (:data-dir cfg) "/postgres.log")} (name cmd)))
 
-(defn mk-hba [cfg]
-  (with-out-str
-    (doseq [ks (:hba cfg)]
-      (println (str/join "\t" (map name ks))))))
+(defn initdb [cfg] (pg_ctl cfg :initdb))
 
-(defn reload-config [cfg]
-  (.kill @pg-proc "SIGHUP"))
+(defn create-cluster [opts]
+  (let [cfg (node-config opts)]
+    (go (println "Clear directory" (<! (shell/spawn "rm" "-rf" (:data-dir cfg))))
+        (println "Cluster creation status " (<! (initdb cfg)))
+        (println "Write config" (<! (pg-config/update-config cfg)))
+        (println "Write hba" (<! (pg-config/update-hba cfg)))
+        (swap! state assoc-in [:nodes (:name opts)] cfg))))
 
-(defn update-hba [cfg]
-  (let [hba (mk-hba cfg)
-        conf_path (str (:data-dir cfg) "/pg_hba.conf")]
-    (println "Update pg_hbal:\n" hba)
-    (shell/spit conf_path hba)
-    (reload-config cfg)))
-
-
-(defn update-config [cfg]
-  (let [pgconf (mk-config cfg)
-        conf_path (str (:data-dir cfg) "/postgresql.conf")]
-    (println "Update config:\n" pgconf)
-    (shell/spit conf_path pgconf)
-    (reload-config cfg)))
-
-(comment 
-  (update-hba config)
-  (update-config config)
-  )
-
-(defn start-postgres [cfg]
-  (println "Starging pg cluster" cfg)
-  (let [chan (async/chan)
-        p (.spawn proc (bin "postgres") #js["-D" (:data-dir cfg)])]
+(defn *start [node-name cfg chan]
+  (let [p (.spawn proc (bin "postgres") #js["-D" (:data-dir cfg)])]
+    (println "SPAWN: postgres -D " (:data-dir cfg))
     (.pipe (.-stdout p ) (.-stdout js/process))
     (.pipe (.-stderr p) (.-stderr js/process))
     (.on p "exit" (fn [code sig]
-                    (println "Postgres exit with " code " SIG " sig)
+                    (println "Postgres exit with " code)
                     (when code (async/put! chan code))
                     (async/close! chan)))
+    (swap! state assoc-in [:nodes node-name :process] p)))
 
-    (reset! pg-proc p)
-    (reset! pg-on-exit chan)
+(defn start-postgres [node-name]
+  (let [cfg (get-in @state [:nodes node-name])
+        pg-proc (get-in @state [:nodes node-name :process])
+        chan (async/chan)]
+    (cond
+      (and cfg pg-proc) (do (println "Postgresql already started " (.-pid pg-proc)) (async/close! chan))
+      cfg (do (println "Starging pg cluster" cfg)
+              (*start node-name cfg chan))
+      :else (do (println "No such node: " node-name)
+                (async/close! chan)))
     chan))
 
-(defn stop-postgres [sig]
-  (println "Stopping pg cluster")
-  (when-let [proc @pg-proc]
-    (.kill proc (str/upper-case (name sig)))))
+(defn stop-postgres [node-name sig]
+  (if-let [proc (get-in @state [:nodes node-name :process])]
+    (do
+      (println "Stopping pg cluster")
+      (.kill proc (str/upper-case (name sig)))
+      (swap! state assoc-in [:nodes node-name :process] nil))
+    (println "Postgresql already stopped")))
 
-(defn restart-postgres [cfg]
-  (stop-postgres :sigint)
-  (start-postgres cfg))
-
-(defn reconfigure [cfg]
+(defn create-replica [conn replica-opts]
+  ;; pg_basebackup -h `pwd` -p 5434 -c fast -D /tmp/cluster-2
   (go
-    (println "CONFIG:" (<! (update-config cfg)))
-    (println "RESTART:" (<! (restart-postgres cfg)))))
-
-(defn pg_ctl [cfg cmd]
-  (shell/spawn (bin "pg_ctl") {:-D (:data-dir cfg)
-                               :-l (str (:data-dir cfg) "/postgres.log")}
-               (name cmd)))
-
-(defn pg_basebackup [from-cfg to-cfg]
-  )
-
-(defn stop-by-pid [pid])
-
-(defn postmaster-pid [cfg]
-  (go (if-let [res (<! (shell/slurp (str (:data-dir cfg) "/postmaster.pid")))]
-        (first (str/split  res #"\n"))
-        nil)))
-
-(defn sighup-params [cfg]
-  (pg/exec (conn-uri cfg)
-           {:select [:name]
-            :from [:pg_settings]
-            :where [:= :context "sighup"]}))
-
-(defn conn-uri [cfg]
-  (str "postgres:///postgres?host=" (:data-dir cfg) "&port=" (get-in cfg [:config :port])))
-
-(defn probe-connection [cfg]
-  (pg/exec (conn-uri cfg) {:select [1]}))
-
-(defn create-cluster [cfg]
-  (let [cmd []]
-    (go
-      (<! (shell/spawn "rm" "-rf" (:data-dir cfg)))
-      (pg_ctl cfg :stop)
-      (println "Cluster creation status " (<! (pg_ctl cfg :initdb)))
-      (println "Write config" (<! (update-config cfg)))
-      (println "Start cluster" (<! (start-postgres cfg)))
-      (println "Probe connection" (<! (probe-connection config))))))
+    (let [cfg (node-config replica-opts)]
+      (println "Clear directory" (<! (shell/spawn "rm" "-rf" (:data-dir cfg))))
+      (<! (shell/spawn "pg_basebackup"
+                       {:-h (:data-dir conn)
+                        :-p (:port conn)
+                        :-c "fast"
+                        :-D (:data-dir cfg)}))
+      (println "config" (<! (pg-config/update-config cfg)))
+      (println "hba" (<! (pg-config/update-hba cfg)))
+      (println "recovery" (<! (pg-config/update-recovery conn cfg)))
+      (swap! state assoc-in [:nodes (:name replica-opts)] cfg))))
 
 
 (defn goprint [x]
   (go (println (<! x))))
 
 (comment
-  (update-config config)
-  (reconfigure config)
 
-  (create-cluster config)
+  (goprint (shell/spawn "rm" "-rf" "/tmp/wallogs"))
+  (goprint (shell/spawn "mkdir" "-p" "/tmp/wallogs/pg_xlog"))
 
-  (goprint
-   (postmaster-pid config ))
+  (reset! state {:bin "/usr/lib/postgresql/9.5/bin" :nodes {}})
 
-  (goprint
-   (start-postgres config))
+  (create-cluster {:name "node-1" :port 5434 :data-dir "/tmp/node-1"})
+
+  (keys (:nodes @state))
+
+  (goprint (start-postgres "node-1"))
+  (stop-postgres "node-1" :sigint)
 
 
-  (stop-postgres :sigint)
+  (create-replica {:name "node-1" :port 5434 :data-dir "/tmp/node-1"}
+                  {:name "node-2" :port 5435 :data-dir "/tmp/node-2"})
 
-  (.kill @pg-proc "SIGHUP")
-  (.kill @pg-proc "SIGINT")
-
-  (.kill @pg-proc "SIGKILL")
-
-  (goprint (probe-connection config))
-
-  (goprint (sighup-params config))
+  (goprint (start-postgres "node-2"))
+  (stop-postgres "node-2" :sigint)
   )
 
-;; SIGTERM This is the Smart Shutdown mode. After receiving SIGTERM, the server
-;; disallows new connections, but lets existing sessions end their work normally.
-;; It shuts down only after all of the sessions terminate. If the server is in
-;; online backup mode, it additionally waits until online backup mode is no longer
-;; active. While backup mode is active, new connections will still be allowed, but
-;; only to superusers (this exception allows a superuser to connect to terminate
-;; online backup mode). If the server is in recovery when a smart shutdown is
-;; requested, recovery and streaming replication will be stopped only after all
-;; regular sessions have terminated.
+(comment
+  (defnl reload-config [node-name]
+    (.kill @pg-proc "SIGHUP"))
 
-;; SIGINT This is the Fast Shutdown mode. The server disallows new connections and
-;; sends all existing server processes SIGTERM, which will cause them to abort
-;; their current transactions and exit promptly. It then waits for all server
-;; processes to exit and finally shuts down. If the server is in online backup
-;; mode, backup mode will be terminated, rendering the backup useless.
+  (defn stop-postgres-by-pid [cfg]
+    (go
+      (when-let [pid (<! (postmaster-pid cfg))]
+        (println "Killing postgres" (<! (shell/spawn "kill" "-9" pid)))
+        (println "Remove pid file" (<! (shell/spawn "rm" "-f" (pid-file cfg))))
+        (reset! pg-proc nil))))
 
-;; SIGQUIT This is the Immediate Shutdown mode. The server will send SIGQUIT to all
-;; child processes and wait for them to terminate. If any do not terminate within 5
-;; seconds, they will be sent SIGKILL. The master server process exits as soon as
-;; all child processes have exited, without doing normal database shutdown
-;; processing. This will lead to recovery (by replaying the WAL log) upon next
-;; start-up. This is recommended only in emergencies.
+
+  (defn conn-uri [cfg]
+    (str "postgres:///postgres?host=" (:data-dir cfg) "&port=" (get-in cfg [:config :port])))
+
+  (defn pid-file [cfg] (str (:data-dir cfg) "/postmaster.pid"))
+
+  (defn postmaster-pid [cfg]
+    (go (if-let [res (<! (shell/slurp (pid-file cfg)))]
+          (first (str/split  res #"\n"))
+          nil)))
+
+  (defn probe-connection [cfg]
+    (pg/exec (conn-uri cfg) {:select [1]})))
+
+
+
+

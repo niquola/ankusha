@@ -1,23 +1,50 @@
 (ns ankusha.web
   (:require [cljs.nodejs :as node]
+            [ankusha.swagger :as swagger]
+            [ankusha.pg-cluster :as pg]
             [route-map.core :as route]))
 
 (def http (node/require "http"))
 
-(defn swagger [req resp]
-  (.end resp "Swagger"))
+(declare routes)
+
+(defn responce [resp m]
+  (aset resp "statusCode" (or (:status m) 200))
+  (.setHeader resp "conent-type" "application/json")
+  (.end resp (.stringify js/JSON (clj->js (:body m)) nil 4)))
+
+(defn swagger
+  {:swagger {:summary "Swagger spec for API"}}
+  [req resp]
+  (responce resp {:body (swagger/spec routes)}))
 
 (defn not-found [req resp]
   (let [method (.-method req)
         url (.-url req)]
-    (.end resp (str  "Resource " method " " url " not found"))))
+    (responce resp {:status 404
+                    :body {:message (str  "Resource " method " " url " not found")}})))
 
-(defn nodes [req resp]
-  (.end resp "Nodes list"))
+(defn status
+  {:swagger {:summary "List nodes in cluster"}}
+  [req resp]
+  (responce resp {:body [{:name "node-1" :status "master" :ip ""}
+                         {:name "node-2" :status "replica" :ip ""}]}))
+
+(defn local-status
+  {:swagger {:summary "Status concerete node"}}
+  [req resp]
+  (responce resp {:body {:status (pg/status)}}))
+
+(defn register
+  {:swagger {:summary "Register node in cluster"}}
+  [req resp]
+  (responce resp {:body {:message "Success"}}))
 
 (def routes
   {:GET #'swagger
-   "nodes" {:GET #'nodes}})
+   "status" {:GET #'local-status}
+   "cluster" {"status" {:GET #'status}
+              "register" {:GET #'register}}})
 
 (defn handler [req resp]
   (let [method (.-method req)
