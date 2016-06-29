@@ -1,10 +1,8 @@
 (ns ankusha.pg-config
-  (:require-macros [cljs.core.async.macros :as m :refer [go alt! go-loop]])
-  (:require [cljs.nodejs :as node]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [ankusha.shell :as shell]
             [ankusha.pg :as pg]
-            [cljs.core.async :as async :refer [<!]]))
+            [clojure.core.async :as async :refer [<!]]))
 
 (defn to-config [cfg]
   (with-out-str
@@ -38,25 +36,25 @@
   (let [hba (mk-hba cfg)
         conf_path (str (:data-dir cfg) "/pg_hba.conf")]
     (println "Update pg_hbal:\n" hba)
-    (shell/spit conf_path hba)))
+    (spit conf_path hba)))
 
 (defn update-config [cfg]
   (let [pgconf (mk-config cfg)
         conf_path (str (:data-dir cfg) "/postgresql.conf")]
     (println "Update config:\n" pgconf)
-    (shell/spit conf_path pgconf)))
+    (spit conf_path pgconf)))
 
 (defn update-recovery [master-cfg replica-cfg]
   (let [txt (mk-recovery master-cfg replica-cfg)
         conf_path (str (:data-dir replica-cfg) "/recovery.conf")]
     (println "Update recovery.conf [" conf_path "]\n" txt )
-    (shell/spit conf_path txt)))
+    (spit conf_path txt)))
 
-(defn sighup-params [cfg]
-  (pg/exec (conn-uri cfg)
-           {:select [:name]
-            :from [:pg_settings]
-            :where [:= :context "sighup"]}))
+;; (defn sighup-params [cfg]
+;;   (pg/exec (conn-uri cfg)
+;;            {:select [:name]
+;;             :from [:pg_settings]
+;;             :where [:= :context "sighup"]}))
 
 (comment
   (update-config config)

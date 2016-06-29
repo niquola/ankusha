@@ -1,23 +1,21 @@
 (defproject node_test "0.1.0-SNAPSHOT"
-  :dependencies [[org.clojure/clojure "1.9.0-alpha6"]
-                 [com.cemerick/piggieback "0.2.1"]
-                 [org.clojure/clojurescript "1.9.36" :scope "provided"]]
+  :dependencies [[org.clojure/clojure "1.9.0-alpha8"]
+                 [route-map "0.0.3"]
+                 [cheshire "5.5.0"]
+                 [org.postgresql/postgresql "9.4.1208.jre7"]
+                 [org.clojure/java.jdbc "0.5.0"]
+                 [org.clojure/core.async "0.2.385"]
+                 [http-kit "2.1.19"]
+                 [org.clojure/tools.logging "0.3.1"]
+                 [ch.qos.logback/logback-classic "1.1.7"]
+                 [honeysql "0.7.0"]]
 
-  :source-paths ["src" "vendor/honeysql/src" "vendor/honeysql/test"]
+  :source-paths ["src"]
 
-  :profiles {:dev {:dependencies [[com.cemerick/piggieback "0.2.1"]
-                                  [org.clojure/tools.nrepl "0.2.12"]
-                                  [cljsjs/nodejs-externs "1.0.4-1"]
-                                  [org.clojure/core.async "0.2.385"]
-                                  [route-map "0.0.3"]]
-                   :plugins [[lein-ancient "0.6.10"]
-                             [lein-cljsbuild "1.1.3"]]
-              :repl-options {:nrepl-middleware [cemerick.piggieback/wrap-cljs-repl]}}}
-  :clean-targets [[:cljsbuild :builds 0 :compiler :output-to] :target-path :compile-path]
-  :cljsbuild {:builds [{:id "dev"
-                        :source-paths ["src" "vendor/honeysql/src" "vendor/honeysql/test"]
-                        :compiler {:main "ankusha.core"
-                                   :output-dir "out"
-                                   :output-to "index.js"
-                                   :target :nodejs}}]})
+  :main ankusha.core
 
+  :uberjar-name "ankusha.jar"
+
+  :profiles {:uberjar {:aot :all :omit-source true}
+             :dev {:dependencies []
+                   :plugins [[lein-ancient "0.6.10"]]}})
