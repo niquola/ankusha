@@ -16,14 +16,19 @@
 (defonce pg-on-exit (atom nil))
 
 (def config {:data-dir "/tmp/cluster-1"
+             :hba [[:local :all :all :trust]
+                   [:local :replication :nicola :trust]
+                   [:host  :replication :nicola "127.0.0.1/32" :trust]
+                   [:host :all :all "0.0.0.0/0" :md5]]
              :config {:max_connections 100
                       :listen_addresses "*"
                       :unix_socket_directories "/tmp/cluster-1"
 
                       :wal_level "logical"
                       :archive_mode "on"
-                      :archive_command "rm -rf %" 
+                      :archive_command "rm -rf %p" 
                       :archive_timeout 60
+                      :max_wal_senders 2
 
                       :shared_buffers  "128MB"
                       :port "5434"}})
@@ -33,13 +38,36 @@
     (doseq [[k v] (:config cfg)]
       (println (name k) " = " (if (string? v) (str "'" v "'") v)))))
 
+(defn mk-hba [cfg]
+  (with-out-str
+    (doseq [ks (:hba cfg)]
+      (println (str/join "\t" (map name ks))))))
+
+(defn reload-config [cfg]
+  (.kill @pg-proc "SIGHUP"))
+
+(defn update-hba [cfg]
+  (let [hba (mk-hba cfg)
+        conf_path (str (:data-dir cfg) "/pg_hba.conf")]
+    (println "Update pg_hbal:\n" hba)
+    (shell/spit conf_path hba)
+    (reload-config cfg)))
+
+
 (defn update-config [cfg]
   (let [pgconf (mk-config cfg)
         conf_path (str (:data-dir cfg) "/postgresql.conf")]
     (println "Update config:\n" pgconf)
-    (shell/spit conf_path pgconf)))
+    (shell/spit conf_path pgconf)
+    (reload-config cfg)))
+
+(comment 
+  (update-hba config)
+  (update-config config)
+  )
 
 (defn start-postgres [cfg]
+  (println "Starging pg cluster" cfg)
   (let [chan (async/chan)
         p (.spawn proc (bin "postgres") #js["-D" (:data-dir cfg)])]
     (.pipe (.-stdout p ) (.-stdout js/process))
@@ -54,6 +82,7 @@
     chan))
 
 (defn stop-postgres [sig]
+  (println "Stopping pg cluster")
   (when-let [proc @pg-proc]
     (.kill proc (str/upper-case (name sig)))))
 
@@ -71,8 +100,10 @@
                                :-l (str (:data-dir cfg) "/postgres.log")}
                (name cmd)))
 
-(defn stop-by-pid [pid]
+(defn pg_basebackup [from-cfg to-cfg]
   )
+
+(defn stop-by-pid [pid])
 
 (defn postmaster-pid [cfg]
   (go (if-let [res (<! (shell/slurp (str (:data-dir cfg) "/postmaster.pid")))]
@@ -102,6 +133,8 @@
       (println "Probe connection" (<! (probe-connection config))))))
 
 
+(defn goprint [x]
+  (go (println (<! x))))
 
 (comment
   (update-config config)
@@ -109,10 +142,12 @@
 
   (create-cluster config)
 
-  (goprint (postmaster-pid config ))
+  (goprint
+   (postmaster-pid config ))
 
   (goprint
    (start-postgres config))
+
 
   (stop-postgres :sigint)
 
@@ -122,7 +157,6 @@
   (.kill @pg-proc "SIGKILL")
 
   (goprint (probe-connection config))
-  (goprint (shell/slurp "/tmp/cluster-1/postmaster.pid"))
 
   (goprint (sighup-params config))
   )
@@ -149,4 +183,3 @@
 ;; all child processes have exited, without doing normal database shutdown
 ;; processing. This will lead to recovery (by replaying the WAL log) upon next
 ;; start-up. This is recommended only in emergencies.
-
