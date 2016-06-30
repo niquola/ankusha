@@ -52,6 +52,70 @@ ankusha schedule switchover 'every week'
 
 ```
 
+
+## Failover algorithm
+
+
+```
+label: 0
+if is_maintains_dvar?
+  goto 0 
+else
+  if master_dvar?
+    case my_status
+      MASTER:
+        if it's_me?
+          renew master_dvar? + ttl
+          goto 0
+        else
+          if history_spawn?
+            stop pg
+            exit cluster
+            notify
+          else
+            rewind to new master
+      REPLICA:
+        if my_master?
+          goto 0
+        else
+          if history_spawn?
+            stop pg
+            exit cluster
+            notify
+          else
+            rewind to new master
+      NEWBIE:
+        rewind to new master
+   else
+    case my_status
+      MASTER:
+        if got_lock?
+          set master_dvar to me
+          release_lock
+          goto 0
+        else
+          goto 0
+      REPLICA:
+        if pg_master_alive?
+          notify inconsistency
+          goto 0
+        else
+          if i_am_latest?
+            if got_lock?
+              promote
+              set master_dvar to me
+              release lock
+            else
+              goto 0
+          else
+            goto 0
+      NEWBIE:
+        goto 0
+```
+
+
+
+
 ## Design ideas
 
 * anku is agent running on every node

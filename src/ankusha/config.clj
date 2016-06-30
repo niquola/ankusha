@@ -1,6 +1,5 @@
 (ns ankusha.config
   (:require [clojure.string :as str]
-            [ankusha.shell :as shell]
             [ankusha.pg :as pg]
             [clojure.core.async :as async :refer [<!]]))
 
