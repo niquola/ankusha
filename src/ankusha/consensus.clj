@@ -10,7 +10,7 @@
 
 (defn storage [cfg]
   (-> (Storage/builder)
-      (.withDirectory (str (:data-dir cfg) "/atomix.log"))
+      (.withDirectory (str (:data-dir cfg) "/.atomix"))
       (.build)))
 
 (defn- addr ^Address [{h :host p :port}] (Address. h p))
@@ -39,30 +39,121 @@
    (map #(.getName %)
         (.getMethods (type obj)))))
 
-(comment
-  (addr {:host  "localhost" :port 4444})
+(defn get-private-field [instance field-name]
+  (. (doto (first (filter (fn [x] (.. x getName (equals field-name)))
+                          (.. instance getClass getDeclaredFields)))
+       (.setAccessible true))
+     (get instance)))
 
-  (def rep-1 (bootstrap 4444 {:name "node-1" :data-dir "/tmp/node-1"}))
-  (def rep-2 (replica 4445 {:name "node-2" :data-dir "/tmp/node-2"}))
-  (def rep-3 (replica 4446 {:name "node-3" :data-dir "/tmp/node-3"}))
+(defn cluster [rep]
+  (-> (get-private-field rep "server")
+      .server
+      .cluster))
 
-  rep-1
-  rep-2
+(defn members [rep]
+  (.members (cluster rep)))
 
-  (.shutdown rep-2)
-  (.shutdown rep-1)
-  (.shutdown rep-3)
+(defn on-change [mem]
+  (.onStatusChange
+   mem
+   (reify java.util.function.Consumer
+     (accept [this status]
+       (println "Status of " mem " Changed to " status)))))
 
-  (.join rep-2
-         (addrs [{:host "localhost" :port 4444}]))
 
-  (.join rep-3
-         (addrs [{:host "localhost" :port 4444}
-                 {:host "localhost" :port 4445}]))
+(comment "rep1"
+         (def rep-1 (bootstrap 4444 {:name "node-1" :data-dir "/tmp/node-1"}))
 
-  (methods rep-2)
+         (.shutdown rep-1)
 
-  )
+         (.type rep-1)
+
+         (members rep-1)
+
+         (def lock-1 (get-lock rep-1 "master"))
+         (.thenRun (.lock lock-1)
+                   (reify Runnable
+                     (run [this]  (println "Locked 1"))))
+         )
+
+(comment "rep2"
+         (def rep-2 (replica 4445 {:name "node-2" :data-dir "/tmp/node-2"}))
+
+         (.join rep-2
+                (addrs [{:host "localhost" :port 4444}]))
+
+         (.type rep-2)
+
+         rep-2
+
+         (methods rep-2)
+
+
+         (map (fn [m] (println (str (.address m)) " " (str (.status m))))
+              (members rep-2))
+
+         (cluster rep-2)
+
+         (defn subscribe [rep]
+           (doseq [mem (members rep)]
+             (println "MEMBER" mem)
+             (on-change mem)))
+
+         (-> rep-2
+             cluster
+             (get-private-field "leaveListeners")
+             (get-private-field "listeners")
+             .clear)
+
+         (-> rep-2
+             cluster
+             (get-private-field "joinListeners")
+             (get-private-field "listeners")
+             .clear)
+
+         (.onLeave (cluster rep-2)
+                   (reify java.util.function.Consumer
+                     (accept [this mem]
+                       (println "LEAVED " mem))))
+
+         (.onJoin (cluster rep-2)
+                  (reify java.util.function.Consumer
+                    (accept [this mem]
+                      (println "JOINED " mem)
+                      (on-change mem))))
+
+         (methods (cluster rep-2))
+
+         (.leader (cluster rep-2))
+
+
+         (subscribe rep-2)
+
+         (.shutdown rep-2)
+         )
+
+(comment "rep3"
+
+         (def rep-3 (replica 4446 {:name "node-3" :data-dir "/tmp/node-3"}))
+
+         (.join rep-3
+                (addrs [{:host "localhost" :port 4444}
+                        {:host "localhost" :port 4445}]))
+
+         rep-3
+         (members rep-3)
+
+         (map (fn [m] (println (str (.address m)) " " (str (.status m))))
+              (members rep-3))
+
+         (.type rep-3)
+
+         (.leave rep-3)
+
+         (.shutdown rep-3)
+
+         )
+
 
 
 
