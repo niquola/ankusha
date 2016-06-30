@@ -1,6 +1,6 @@
 (ns ankusha.pg-cluster
   (:require [clojure.string :as str]
-            [ankusha.pg-config :as pg-config]
+            [ankusha.config :as pg-config]
             [ankusha.pg :as pg]
             [clojure.java.shell :as sh]
             [clojure.core.async :as async :refer [go alt! go-loop <!]]
@@ -108,4 +108,5 @@
   (stop "node-2")
 
   (replica "node-1" {:name "node-3" :port 5436})
-  (start "node-3"))
+  (start "node-3")
+  (stop "node-3"))

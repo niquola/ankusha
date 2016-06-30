@@ -6,9 +6,13 @@
                  [org.clojure/java.jdbc "0.5.0"]
                  [org.clojure/core.async "0.2.385"]
                  [http-kit "2.1.19"]
+                 [io.atomix/atomix-all "1.0.0-rc4"]
+                 [io.atomix.catalyst/catalyst-netty "1.0.7"]
                  [org.clojure/tools.logging "0.3.1"]
                  [ch.qos.logback/logback-classic "1.1.7"]
                  [honeysql "0.7.0"]]
+
+  :repositories [["sonatype-nexus-snapshots" {:url "https://oss.sonatype.org/content/repositories/snapshots"}]]
 
   :source-paths ["src"]
 
