@@ -1,6 +1,9 @@
 (ns ankusha.consensus
   (:require [clojure.tools.logging :as log]
-            [taoensso.nippy :as nippy])
+            [taoensso.nippy :as nippy]
+            [ankusha.consensus :as cluster]
+            [ankusha.state :as state]
+            [clojure.java.shell :as sh])
   (:import (io.atomix Atomix AtomixClient AtomixReplica)
            (io.atomix.catalyst.transport Address NettyTransport)
            (io.atomix.copycat.server.storage Storage StorageLevel)
@@ -10,14 +13,12 @@
            (io.atomix.collections DistributedMap)
            (io.atomix.variables DistributedValue)))
 
-(defonce state (atom {}))
-
-(defn get-replica [name]
-  (get @state name))
+(defn get-replica []
+  (state/get-in [:atomix :replica]))
 
 (defn- storage [cfg]
   (-> (Storage/builder)
-      (.withDirectory (str (:data-dir cfg) "/.atomix"))
+      (.withDirectory (str (:data-dir cfg) "/atomix"))
       (.build)))
 
 (defn- addr ^Address [{h :host p :port}] (Address. h p))
@@ -30,6 +31,7 @@
 
 (defn- replica ^AtomixReplica
   [cfg]
+  (sh/sh "mkdir" "-p" (:data-dir cfg))
   (-> (AtomixReplica/builder
        (addr {:host (localhost) :port (:atomix-port cfg)}))
       (.withTransport (NettyTransport.))
@@ -37,7 +39,7 @@
       (.build)))
 
 
-(defn- methods [obj]
+(defn- xmethods [obj]
   (sort
    (map #(.getName %)
         (.getMethods (type obj)))))
@@ -68,7 +70,6 @@
      (accept [this tp]
        (log/info "ATOMIX: member type " (.address mem) " changed to " tp)))))
 
-
 (defn- subscribe [rep]
   (doseq [mem (members rep)]
     (on-change mem)))
@@ -98,34 +99,37 @@
             (reify Runnable
               (run [this]  (log/info "Locked 1")))))
 
-
-(defn- bootstrap [nm]
-  (when-let [repl (get-replica nm)]
-    (-> repl .bootstrap .get)))
+(defn bootstrap []
+  (-> (get-replica) .bootstrap .get))
 
 (defn start [cfg]
+  (log/info "Starting replica" cfg)
   (let [repl (replica cfg)]
     (subscribe repl)
     (on-join repl)
     (on-leave repl)
-    (swap! state assoc (:name cfg) repl)))
+    (state/put-in [:atomix :replica] repl)))
 
-(defn join [nm as]
-  (if-let [repl (get-replica nm)]
-    (.join repl (addrs as))
-    (log/info "No replica for " nm)))
+(defn join [as]
+  (if-let [repl (get-replica)]
+    (.join (.join repl (addrs as)))
+    (log/info "No current replica")))
 
-(defn shutdown [nm]
-  (if-let [repl (get-replica nm)]
-    (log/info "SHUTDOWN" (.shutdown repl))
-    (log/info "No replica for " nm)))
+(defn shutdown []
+  (if-let [repl (get-replica)]
+    (try
+      (log/info "SHUTDOWN" )
+      (.join (.shutdown repl))
+         (catch Exception e
+           (log/error e)))
+    (log/info "No replica")))
 
-(defn leader [nm]
-  (when-let [repl (get-replica nm)]
+(defn leader []
+  (when-let [repl (get-replica)]
     (.leader (cluster repl))))
 
-(defn status [nm]
-  (when-let [repl (get-replica nm)]
+(defn status []
+  (when-let [repl (get-replica)]
     (->> (members repl)
          (map (fn [m] [(str (.address m)) (str (.status m))])))))
 
@@ -137,87 +141,58 @@
 
 (decode (encode {:a 1}))
 
-
-(defn dmap [nm map-name]
-  (when-let [repl (get-replica nm)]
+(defn dmap [map-name]
+  (when-let [repl (get-replica)]
     (.join (.getMap repl map-name))))
 
-(defn dmap! [nm map-name]
-  (let [m (dmap nm map-name)]
+(defn dmap! [map-name]
+  (when-let [m (dmap map-name)]
     (reduce (fn [acc k]
               (assoc acc (keyword k) (decode (.join (.get m k)))))
             {} (.join (.keySet m)))))
 
-(defn dmap-put [nm map-name key value]
-  (when-let [m (dmap nm map-name)]
+(defn dmap-put [map-name key value]
+  (when-let [m (dmap map-name)]
     (.join (.put m (name key) (encode value)))))
 
-(defn dmap-get [nm map-name key]
-  (let [m (dmap nm map-name)]
+(defn dmap-get [map-name key]
+  (let [m (dmap map-name)]
     (decode (.join (.get m (name key))))))
+
+(defn dvar [var-nm]
+  (-> (get-replica)
+      (.getValue var-nm)
+      .join))
+
+(defn dvar! [var-nm]
+  (when-let [val (dvar var-nm)]
+    (when-let [ev (.join (.get val))]
+      (decode ev))))
+
+(defn dvar-set [var-nm v]
+  (when-let [val (dvar var-nm)]
+    (.join (.set val (encode v)))))
 
 
 (comment "rep1"
-         (start {:atomix-port 4444
-                 :name "node-1"
-                 :data-dir "/tmp/node-1"})
-
-         (bootstrap "node-1")
-
-         (start {:atomix-port 4445
-                 :name "node-2"
-                 :data-dir "/tmp/node-2"})
-
-         (bootstrap "node-2")
+         (state/with-node "node-1"
+           (start {:atomix-port 4444
+                   :name "node-1"
+                   :data-dir "/tmp/node-1"})
+           (shutdown)
+           (bootstrap)
+           (dmap-put "pg-clusters" "node-1" "newone"))
 
 
-         (shutdown "node-1")
+         (state/with-node "node-2"
+           (start {:atomix-port 4446
+                   :name "node-3"
+                   :data-dir "/tmp/node-3"})
 
-         (join "node-2" [{:host "localhost" :port 4444}])
+           (bootstrap)
 
-         (start {:atomix-port 4446
-                 :name "node-3"
-                 :data-dir "/tmp/node-3"})
+           (join [{:host "localhost" :port 4444}
+                  {:host "localhost" :port 4445}]))
 
-         (bootstrap "node-3")
-
-         (join "node-3" [{:host "localhost" :port 4444}
-                         {:host "localhost" :port 4445}])
-
-
-
-         (members (get-replica "node-1"))
-
-         (status "node-1")
-         (status "node-2")
-         (status "node-3")
-
-         (shutdown "node-1")
-         (shutdown "node-2")
-         (shutdown "node-3")
-
-         (leader "node-1")
-
-
-         (methods (get-replica "node-1"))
-
-
-
-         (dmap-put "node-2" "pg-clusters" "node-1" "newone")
-         (dmap-put "node-2" "pg-clusters" "node-2" "newone")
-
-         (.join (.keySet (dmap "node-1" "pg-clusters")))
-
-         (dmap-get "node-1" "pg-clusters" "node-1")
-         (dmap-get "node-3" "pg-clusters" "node-1")
-
-         (dmap! "node-3" "pg-clusters")
-
-
-         )
-
-
-
-
-
-
+         (status)
+         (leader))

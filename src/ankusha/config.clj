@@ -1,7 +1,11 @@
 (ns ankusha.config
   (:require [clojure.string :as str]
             [ankusha.pg :as pg]
+            [clojure.tools.logging :as log]
             [clojure.core.async :as async :refer [<!]]))
+
+(defn pg-data-dir [cfg & args]
+  (apply str (:data-dir cfg) "/pg" (when-not (empty? args) (str "/" (str/join "/" args)))))
 
 (defn to-config [cfg]
   (with-out-str
@@ -33,20 +37,20 @@
 
 (defn update-hba [cfg]
   (let [hba (mk-hba cfg)
-        conf_path (str (:data-dir cfg) "/pg_hba.conf")]
-    (println "Update pg_hbal:\n" hba)
+        conf_path (pg-data-dir cfg "pg_hba.conf")]
+    (log/info "Update pg_hbal:\n" hba)
     (spit conf_path hba)))
 
 (defn update-config [cfg]
   (let [pgconf (mk-config cfg)
-        conf_path (str (:data-dir cfg) "/postgresql.conf")]
-    (println "Update config:\n" pgconf)
+        conf_path (pg-data-dir cfg "postgresql.conf")]
+    (log/info "Update config:\n" pgconf)
     (spit conf_path pgconf)))
 
 (defn update-recovery [master-cfg replica-cfg]
   (let [txt (mk-recovery master-cfg replica-cfg)
-        conf_path (str (:data-dir replica-cfg) "/recovery.conf")]
-    (println "Update recovery.conf [" conf_path "]\n" txt )
+        conf_path (pg-data-dir replica-cfg "/recovery.conf")]
+    (log/info "Update recovery.conf [" conf_path "]\n" txt )
     (spit conf_path txt)))
 
 ;; (defn sighup-params [cfg]

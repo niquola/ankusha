@@ -1,6 +1,7 @@
 (ns ankusha.web
   (:require [ankusha.swagger :as swagger]
             [ankusha.pg-cluster :as pg]
+            [ankusha.consensus :as cluster]
             [org.httpkit.server :as http]
             [cheshire.core :as json]
             [route-map.core :as route]))
@@ -20,11 +21,15 @@
 (defn not-found [{url :uri method :request-method}]
   (json {:message (str  "Resource " method " " url " not found")} 404))
 
+(defn pg-status
+  {:swagger {:summary "List nodes in cluster"}}
+  [req]
+  (json (cluster/dmap! @cluster/current-node "nodes")))
+
 (defn status
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json  [{:name "node-1" :status "master" :ip ""}
-          {:name "node-2" :status "replica" :ip ""}]))
+  (json (cluster/dmap! @cluster/current-node "nodes")))
 
 (defn local-status
   {:swagger {:summary "Status concerete node"}}
@@ -39,6 +44,7 @@
 (def routes
   {:GET #'swagger
    "status" {:GET #'local-status}
+   "postgres" {"status" {:GET #'pg-status}}
    "cluster" {"status" {:GET #'status}
               "register" {:GET #'register}}})
 
@@ -53,6 +59,7 @@
   (when-let [s @server] (s)))
 
 (defn start []
+  (stop)
   (let [srv (http/run-server #'handler {:port 8651})]
     (reset! server srv)))
 
