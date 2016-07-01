@@ -173,7 +173,6 @@
   (when-let [val (dvar var-nm)]
     (.join (.set val (encode v)))))
 
-
 (comment "rep1"
          (state/with-node "node-1"
            (start {:atomix-port 4444

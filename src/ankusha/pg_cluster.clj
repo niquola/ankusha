@@ -2,15 +2,15 @@
   (:require [clojure.string :as str]
             [ankusha.config :as pg-config :refer [pg-data-dir]]
             [ankusha.pg :as pg]
+            [ankusha.state :as state]
             [clojure.java.shell :as sh]
             [clojure.tools.logging :as log]
             [clojure.core.async :as async :refer [go alt! go-loop <!]]
             [clojure.java.io :as io]))
 
-(defonce state (atom {:bin "/usr/lib/postgresql/9.5/bin"
-                      :nodes {}}))
+(defonce config (atom {:bin "/usr/lib/postgresql/9.5/bin"}))
 
-(defn bin [util] (str (:bin @state) "/" util))
+(defn bin [util] (str (:bin @config) "/" util))
 
 (defn node-config [opts]
   (assert (:data-dir opts))
@@ -36,13 +36,8 @@
 
                           :port (:port opts)}})))
 
-(defn get-node [node-name]
-  (get-in @state [:nodes node-name]))
-
-(defn spawn [& args]
-  (let [ex (-> (java.lang.ProcessBuilder. args)
-               (.inheritIO)
-               (.start))] ex))
+(defn get-node []
+  (state/get-in [:pg] ))
 
 (defn pg_ctl [cfg cmd]
   (log/info "[" (:name cfg) "]" "pg_ctl" cmd)
@@ -54,31 +49,31 @@
     (log/info (:out res))
     (when-let [err (:err res)] (log/warn err))))
 
-(defn pid [node-name]
-  (let [cfg (get-node node-name)
+(defn pid []
+  (let [cfg (get-node)
         pth (pg-data-dir cfg "/postmaster.pid")]
     (when (.exists (io/file pth))
       (first (str/split (slurp pth) #"\n")))))
 
-(defn start [node-name]
-  (if-let [cfg (get-node node-name)]
+(defn start []
+  (if-let [cfg (get-node)]
     (if (.exists (io/file (pg-data-dir cfg "/postmaster.pid")))
-      (println "Already started")
+      (log/info "Postgres already started")
       (let [res (pg_ctl cfg :start)]
-        (swap! state assoc-in [:nodes node-name :process] (pid cfg))
+        (state/put-in [:pg :process] (pid cfg))
         res))
-    (println "No such node" node-name)))
+    (log/info "Node not initialized")))
 
-(defn stop [node-name]
-  (pg_ctl (get-node node-name) :stop))
+(defn stop []
+  (pg_ctl (get-node) :stop))
 
 (defn master [opts]
   (let [cfg (node-config opts)]
     (initdb cfg)
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
-    (swap! state assoc-in [:nodes (:name opts)] cfg)
-    (start (:name cfg))
+    (state/put-in [:pg] cfg)
+    (start)
     cfg))
 
 (defn kill [pid sig]
@@ -100,7 +95,7 @@
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
     (pg-config/update-recovery parent-cfg cfg)
-    (swap! state assoc-in [:nodes (:name replica-opts)] cfg)))
+    (state/put-in [:pg] cfg)))
 
 
 (comment

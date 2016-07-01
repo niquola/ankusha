@@ -1,6 +1,5 @@
 (ns ankusha.web
   (:require [ankusha.swagger :as swagger]
-            [ankusha.pg-cluster :as pg]
             [ankusha.consensus :as cluster]
             [org.httpkit.server :as http]
             [cheshire.core :as json]
@@ -24,12 +23,12 @@
 (defn pg-status
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json (cluster/dmap! @cluster/current-node "nodes")))
+  (json (cluster/dmap! "nodes")))
 
 (defn status
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json (cluster/dmap! @cluster/current-node "nodes")))
+  (json (cluster/status)))
 
 (defn local-status
   {:swagger {:summary "Status concerete node"}}
