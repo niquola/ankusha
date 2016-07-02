@@ -1,6 +1,7 @@
 (ns ankusha.web
   (:require [ankusha.swagger :as swagger]
             [ankusha.consensus :as cluster]
+            [ankusha.state :as state]
             [org.httpkit.server :as http]
             [cheshire.core :as json]
             [route-map.core :as route]))
@@ -52,18 +53,16 @@
     ((:match rt) (update-in req [:params] merge (:params rt)))
     (not-found req)))
 
-(defonce server (atom nil))
-
 (defn stop []
-  (when-let [s @server] (s)))
+  (when-let [s (state/get-in [:web])] (s)))
 
-(defn start []
+(defn start [port]
   (stop)
-  (let [srv (http/run-server #'handler {:port 8651})]
-    (reset! server srv)))
+  (let [srv (http/run-server #'handler {:port port})]
+    (state/assoc-in [:web] srv)))
 
 (comment
-  (start)
+  (start 8888)
   (stop)
   )
 

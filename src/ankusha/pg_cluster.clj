@@ -1,7 +1,6 @@
 (ns ankusha.pg-cluster
   (:require [clojure.string :as str]
             [ankusha.config :as pg-config :refer [pg-data-dir]]
-            [ankusha.pg :as pg]
             [ankusha.state :as state]
             [clojure.java.shell :as sh]
             [clojure.tools.logging :as log]
@@ -60,7 +59,7 @@
     (if (.exists (io/file (pg-data-dir cfg "/postmaster.pid")))
       (log/info "Postgres already started")
       (let [res (pg_ctl cfg :start)]
-        (state/put-in [:pg :process] (pid cfg))
+        (state/assoc-in [:pg :process] (pid))
         res))
     (log/info "Node not initialized")))
 
@@ -72,7 +71,7 @@
     (initdb cfg)
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
-    (state/put-in [:pg] cfg)
+    (state/assoc-in [:pg] cfg)
     (start)
     cfg))
 
@@ -95,7 +94,7 @@
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
     (pg-config/update-recovery parent-cfg cfg)
-    (state/put-in [:pg] cfg)))
+    (state/assoc-in [:pg] cfg)))
 
 
 (comment

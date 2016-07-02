@@ -1,4 +1,5 @@
-(ns ankusha.state)
+(ns ankusha.state
+  (:refer-clojure :exclude [get-in assoc-in]))
 
 (defonce state (atom {}))
 
@@ -9,11 +10,11 @@
 
 (defn read [val] (get state *current*))
 
-(defn put-in [path val]
-  (swap! state assoc-in (into [*current*] path) val))
+(defn assoc-in [path val]
+  (swap! state clojure.core/assoc-in (into [*current*] path) val))
 
-(defn get-in [path val]
-  (get-in @state (into [*current*] path)))
+(defn get-in [path]
+  (clojure.core/get-in @state (into [*current*] path)))
 
 (defn current [] *current*)
 

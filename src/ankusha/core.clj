@@ -15,7 +15,7 @@
   (cluster/bootstrap)
 
   (let [result (pg/master cfg)]
-    (cluster/dmap-put "nodes" (:name cfg) result)
+    (cluster/dmap-put "nodes" (:name cfg) cfg)
     (cluster/dvar-set "master" (:name cfg))))
 
 (defn bootstrap-replica [cfg addrs]
@@ -50,18 +50,29 @@
 
   (clean-up)
 
+
   (state/with-node "node-1"
     (bootstrap-master
      {:atomix-port 4444
       :port 5434
       :name "node-1"
-      :data-dir "/tmp/node-1"})
+      :data-dir "/tmp/node-1"}))
 
+  (cluster/status)
+  (pg/pid)
 
-    (cluster/status)
-    (cluster/dvar! "master" )
-    (cluster/leader))
+  (future
+    (stop-node))
 
+  (state/with-node "node-3"
+    (future (stop-node)))
+
+  (state/with-node "node-2"
+    (future (stop-node)))
+
+  (cluster/dvar! "master")
+  (cluster/dmap! "nodes")
+  (cluster/leader)
 
   (state/with-node "node-2"
     (bootstrap-replica
@@ -70,6 +81,11 @@
       :port 5435
       :data-dir "/tmp/node-2"}
      [{:port 4444 :host "localhost"}]))
+
+
+  (state/with-node "node-2"
+    (cluster/shutdown)
+    (pg/stop))
 
   (state/with-node "node-3"
     (bootstrap-replica

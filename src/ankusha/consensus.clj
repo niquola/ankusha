@@ -108,7 +108,7 @@
     (subscribe repl)
     (on-join repl)
     (on-leave repl)
-    (state/put-in [:atomix :replica] repl)))
+    (state/assoc-in [:atomix :replica] repl)))
 
 (defn join [as]
   (if-let [repl (get-replica)]
