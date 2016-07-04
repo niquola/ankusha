@@ -26,15 +26,34 @@
   [req]
   (json (cluster/dmap! "nodes")))
 
+(defn health
+  {:swagger {:summary "List nodes in cluster"}}
+  [req]
+  (json (cluster/dmap! "nodes-health")))
+
 (defn status
   {:swagger {:summary "List nodes in cluster"}}
   [req]
   (json (cluster/status)))
 
+(defn master
+  {:swagger {:summary "List nodes in cluster"}}
+  [req]
+  (json (cluster/dvar! "master")))
+
+(defn connection
+  {:swagger {:summary "List nodes in cluster"}}
+  [req]
+  (let [master (cluster/dvar! "master")]
+    (json {:host (:host master)
+           :port (:port master)
+           :user (get-in master [:user :name])
+           :password (get-in master [:user :password])})))
+
 (defn local-status
   {:swagger {:summary "Status concerete node"}}
   [req]
-  (json {:status "TODO"}))
+  (json (cluster/dmap-get "nodes-health" (state/current))))
 
 (defn register
   {:swagger {:summary "Register node in cluster"}}
@@ -44,7 +63,10 @@
 (def routes
   {:GET #'swagger
    "status" {:GET #'local-status}
-   "postgres" {"status" {:GET #'pg-status}}
+   "postgres" {"status" {:GET #'pg-status}
+               "health" {:GET #'health}
+               "master" {:GET #'master
+                         "connection" {:GET #'connection}}}
    "cluster" {"status" {:GET #'status}
               "register" {:GET #'register}}})
 

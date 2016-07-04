@@ -5,7 +5,8 @@
             [ankusha.state :as state :refer [with-node]]
             [clojure.java.shell :as sh])
   (:import (io.atomix Atomix AtomixClient AtomixReplica)
-           (io.atomix.catalyst.transport Address NettyTransport)
+           (io.atomix.catalyst.transport.netty NettyTransport)
+           (io.atomix.catalyst.transport Address)
            (io.atomix.copycat.server.storage Storage StorageLevel)
            (java.util Collection UUID)
            (java.net InetAddress)
@@ -162,11 +163,12 @@
   (when-let [repl (get-replica)]
     (.join (.getMap repl map-name))))
 
+
 (defn dmap! [map-name]
   (when-let [m (dmap map-name)]
-    (reduce (fn [acc k]
-              (assoc acc (keyword k) (decode (.join (.get m k)))))
-            {} (.join (.keySet m)))))
+    (into {}
+          (for [x (.join (.entrySet m))]
+            [(.getKey x) (decode (.getValue x))]))))
 
 (defn dmap-put [map-name key value]
   (when-let [m (dmap map-name)]
@@ -175,6 +177,15 @@
 (defn dmap-get [map-name key]
   (let [m (dmap map-name)]
     (decode (.join (.get m (name key))))))
+
+
+(defn dset [name]
+  (when-let [repl (get-replica)]
+    (.join (.getSet repl name))))
+
+(defn dset-put [name value]
+  (when-let [m (dset name)]
+    (.join (.add m (str value)))))
 
 (defn dvar [var-nm]
   (-> (get-replica)
@@ -209,6 +220,31 @@
                       (bootstrap))))
 
 
+         (dvar-set "master" {:test 1})
+
+         (dvar! "master")
+
+         (dset "myset")
+         (dset-put "myset" "myval")
+         (dmap-put "nodes" "node-2" {:a 1})
+
+
+         (dmap! "nodes")
+
+         (with-node "node-2"
+           (dmap! "nodes"))
+
+         (with-node "node-3"
+           (dmap! "nodes"))
+
+         (dmap-put "nodes" "n1" {:test 1})
+
+         (dmap-get "nodes" "n1")
+
+
+         (with-node "node-3"
+           (dmap-get "nodes" "n1"))
+
          (with-node "node-2"
            (future
              (start {:atomix-port 4445
@@ -236,37 +272,6 @@
                    :data-dir "/tmp/node-3"})
            (bootstrap))
 
-
-
-         (with-node "node-1"
-           (future (println "NODE1" (shutdown))))
-
-         (state/with-node "node-2"
-           (future (shutdown)))
-
-         (state/with-node "node-3"
-           (future (shutdown)))
-
-         (with-node "node-3"
-           (future (.close (client (get-replica)))))
-
-         (with-node "node-3"
-           (xmethods
-            (get-private-field (get-replica) "clusterManager")))
-
-         (state/with-node "node-3"
-           (future (.shutdown (server (get-replica)))))
-
-         (state/with-node "node-3"
-           (.leave (cluster (get-replica))))
-
          (status)
-         (shutdown)
-
-         (with-node "node-2"
-           (status)
-           )
-
-
-         (status)
-         (leader))
+         (leader)
+         )

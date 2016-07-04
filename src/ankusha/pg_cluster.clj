@@ -60,6 +60,10 @@
     (log/info "psql:" res)
     res))
 
+(defn sql [sql]
+  (when-let [cfg (state/get-in [:pg])]
+    (psql cfg sql)))
+
 (defn wait-pg [cfg sec & [sql]]
   (loop [n sec]
     (if (> n 0)
@@ -194,11 +198,12 @@
   (state/with-node "node-2" (stop))
 
 
-  (replica master-cfg 
-           {:name "node-3"
-            :host "127.0.0.1"
-            :port 5436
-            :data-dir "/tmp/node-3"})
+  (state/with-node "node-3"
+    (replica master-cfg 
+             {:name "node-3"
+              :host "127.0.0.1"
+              :port 5436
+              :data-dir "/tmp/node-3"}))
 
   (state/with-node "node-3" (stop))
   )
