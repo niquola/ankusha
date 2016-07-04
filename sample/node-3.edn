@@ -3,8 +3,10 @@
       :data-dir "/tmp/node-3"
       :web #:web{:port 8082}
       :host "127.0.0.1"
-      :atomix   #:ax{:port 4446
+      :atomix   #:ax{:port 4447
                      :join [{:host "127.0.0.1" :port 4444}]
                      :discovery ["http://localhost:8080/discovery"]}
-      :postgres #:pg{:port 5435
-                     :archive_command "cp %p /tmp/wallogs/%p"}}
+      :postgres #:pg{:port 5436
+                     :restore_command "cp /tmp/wallogs/pg_xlog/%f %p"
+                     :archive_command "cp %p /tmp/wallogs/%p"
+                     :archive_cleanup_command "rm -f %r"}}

@@ -15,12 +15,13 @@
 (s/def :lcl/data-dir file-path?)
 (s/def :lcl/web (s/keys :req [:web/port]))
 (s/def :lcl/atomix (s/keys :req [:ax/port]))
-(s/def :lcl/postgres  (s/keys :req [:pg/port :pg/archive_command]))
+(s/def :lcl/postgres  (s/keys :req [:pg/port :pg/archive_command :pg/restore_command :pg/archive_cleanup_command]))
 (s/def :glb/postgres  (s/keys :opt [:pg/archive_command :pg/port]))
+(s/def :glb/recovery  (s/keys :req [:tx/timeout]))
 
 
 (s/def :lcl/config (s/keys :req [:lcl/data-dir :lcl/name :lcl/postgres-bin :lcl/postgres :lcl/host]))
-(s/def :glb/config (s/keys :req [:glb/hba :glb/users :glb/postgres]))
+(s/def :glb/config (s/keys :req [:glb/hba :glb/users :glb/postgres :glb/recovery]))
 
 (defn load-config [filepath]
   (edn/read-string (slurp filepath)))
@@ -49,6 +50,7 @@
 (comment
 
   (load-local "sample/node-1.edn")
+  (load-local "sample/node-2.edn")
 
   (load-global "sample/config.edn")
 

@@ -2,7 +2,8 @@
   (:require [ankusha.state :as state :refer [with-node]]
             [clojure.tools.logging :as log]
             [ankusha.util :as util]
-            [ankusha.atomix.core :as cluster]
+            [ankusha.config :as conf]
+            [ankusha.atomix.core :as ax]
             [ankusha.pg.core :as pg]
             [clojure.core.async :as a :refer [>! <! go-loop alt! chan close! timeout]]))
 
@@ -15,13 +16,16 @@
 (defn stop []
   (util/stop-checker :health))
 
-(defn start []
+(defn start [gcfg lcfg]
   (util/start-checker
    :health
-   (fn [] @health-check-timeout)
+   (fn [] (get-in gcfg [:glb/health :tx/timeout]))
    (fn []
-     (let [res (reduce (fn [acc [k v]] (assoc acc k (pg/sql v))) {} @health-checks)]
-       (cluster/dmap-put "nodes-health" (state/current) (assoc res :ts (str (java.time.Instant/now))))))))
+     (let [res (reduce (fn [acc [k v]] (assoc acc k (pg/psql lcfg v))) {}
+                       (get-in gcfg [:glb/health :chk/master]))]
+       (ax/dmap-put "nodes-health"
+                    (:lcl/name lcfg)
+                    (assoc res :ts (str (java.time.Instant/now))))))))
 
 
 (comment

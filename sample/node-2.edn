@@ -7,4 +7,6 @@
                      :join [{:host "127.0.0.1" :port 4444}]
                      :discovery ["http://localhost:8080/discovery"]}
       :postgres #:pg{:port 5435
-                     :archive_command "cp %p /tmp/wallogs/%p"}}
+                     :archive_command "cp %p /tmp/wallogs/%p"
+                     :restore_command "cp /tmp/wallogs/pg_xlog/%f %p"
+                     :archive_cleanup_command "rm -f %r"}}

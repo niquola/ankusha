@@ -25,20 +25,24 @@
        (str/join "\n")))
 
 (defn config [gcfg lcfg]
-  (to-config (merge (:glb/postgres gcfg)
-                    (:lcl/postgres lcfg)
-                    {:unix_socket_directories (pg-data-dir lcfg) 
-                     :log_line_prefix (str "<" (:lcl/name lcfg) ">")})))
+  (to-config (->
+              (merge (:glb/postgres gcfg)
+                     (:lcl/postgres lcfg)
+                     {:unix_socket_directories (pg-data-dir lcfg) 
+                      :log_line_prefix (str "<" (:lcl/name lcfg) ">")})
+              (dissoc
+               :pg/restore_command
+               :pg/archive_cleanup_command))))
 
-(defn mk-recovery [master-cfg lcfg]
+(defn recovery [gcfg pcfg lcfg]
   (to-config
    {:standby_mode "on"
-    :primary_conninfo (to-props {:host (:host master-cfg) 
-                                 :port (:port master-cfg)
-                                 :user (get-in master-cfg [:user :name]) 
-                                 :password (get-in master-cfg [:user :password])})
-    :restore_command (:pg/restore_command lcfg) 
-    :archive_cleanup_command (:pg/archive_cleanup_command lcfg)}))
+    :primary_conninfo (to-props {:host (:lcl/host pcfg) 
+                                 :port (get-in pcfg [:lcl/postgres :pg/port])
+                                 :user  "replication" 
+                                 :password (get-in gcfg [:glb/users :usr/replication :usr/password])})
+    :restore_command (get-in lcfg [:lcl/postgres :pg/restore_command]) 
+    :archive_cleanup_command (get-in lcfg [:lcl/postgres :pg/archive_cleanup_command])}))
 
 (comment
   (conf/load-local "sample/node-1.edn")
@@ -49,5 +53,7 @@
 
   (println "--------")
   (println (config (conf/global) (conf/local)))
+
+  (recovery (conf/global) (conf/local) (conf/local))
   
   )

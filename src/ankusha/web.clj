@@ -27,6 +27,11 @@
   [req]
   (json (ax/dmap! "nodes")))
 
+(defn global-config
+  {:swagger {:summary "Cluster global config"}}
+  [req]
+  (json (ax/dvar! "config")))
+
 (defn health
   {:swagger {:summary "List nodes in cluster"}}
   [req]
@@ -54,7 +59,7 @@
 (defn local-status
   {:swagger {:summary "Status concerete node"}}
   [req]
-  (json (cluster/dmap-get "nodes-health" (state/current))))
+  (json (ax/dmap-get "nodes-health" (state/current))))
 
 (defn register
   {:swagger {:summary "Register node in ax"}}
@@ -69,7 +74,8 @@
 
 (def routes
   {:GET #'swagger
-   "local" {:GET #'local-config}
+   "local" {"config" {:GET #'local-config}}
+   "global" {"config" {:GET #'global-config}}
    "status" {:GET #'local-status}
    "postgres" {"status" {:GET #'pg-status}
                "health" {:GET #'health}
@@ -86,10 +92,9 @@
 (defn stop []
   (when-let [s (state/get-in [:web])] (s)))
 
-(defn start []
+(defn start [lcfg]
   (stop)
-  (let [cfg (config/local)
-        port (get-in cfg [:web :port])
+  (let [port (get-in lcfg [:lcl/web :web/port])
         srv (http/run-server #'handler {:port port})]
     (state/assoc-in [:web] srv)))
 

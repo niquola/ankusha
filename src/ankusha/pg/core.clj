@@ -1,7 +1,7 @@
 (ns ankusha.pg.core
   (:require [clojure.string :as str]
             [ankusha.pg.config :as pg-config :refer [pg-data-dir]]
-            [ankusha.state :as state]
+            [ankusha.state :as state :refer [with-node]]
             [clojure.java.shell :as sh]
             [clojure.tools.logging :as log]
             [clojure.core.async :as async :refer [go alt! go-loop <!]]
@@ -16,8 +16,7 @@
   (let [res (apply sh/sh args)]
     (if (= 0 (:exit res))
       res
-      (do
-        (log/error res)
+      (do (log/error res)
         (throw (Exception. (str res)))))))
 
 (defn node-config [opts]
@@ -44,25 +43,24 @@
 
                           :port (:port opts)}})))
 
-(defn get-node []
-  (state/get-in [:pg] ))
+(defn pg_ctl [lcfg cmd]
+  (sh! (bin "pg_ctl") "-D" (pg-data-dir lcfg) "-l" (pg-data-dir lcfg "/postgres.log") (name cmd)))
 
-(defn pg_ctl [cfg cmd]
-  (log/info "[" (:name cfg) "]" "pg_ctl" cmd)
-  (sh/sh (bin "pg_ctl") "-D" (pg-data-dir cfg) "-l" (pg-data-dir cfg "/postgres.log") (name cmd)))
-
-(defn psql [cfg sql]
+(defn psql [lcfg sql]
   (let [res (sh/sh "psql"
                    "postgres"
-                   "-h" (pg-data-dir cfg)
-                   "-p" (str (:port cfg))
+                   "-h" (pg-data-dir lcfg)
+                   "-p" (str (get-in lcfg [:lcl/postgres :pg/port]))
                    "-c" sql)]
     (log/info "psql:" res)
     res))
 
-(defn sql [q]
-  (when-let [cfg (state/get-in [:pg])]
-    (psql cfg q)))
+(defn psql! [lcfg sql]
+  (sh! "psql"
+       "postgres"
+       "-h" (pg-data-dir lcfg)
+       "-p" (str (get-in lcfg [:lcl/postgres :pg/port]))
+       "-c" sql))
 
 (defn wait-pg [cfg sec & [sql]]
   (loop [n sec]
@@ -75,94 +73,86 @@
       (throw (Exception. (str "Unable to connect to postgres"))))))
 
 (defn initdb [cfg]
-  (log/info "[" (:cfg/name cfg) "] " "initdb -D" (pg-data-dir cfg))
+  (log/info "[" (:lcl/name cfg) "] " "initdb -D" (pg-data-dir cfg))
   (let [res (sh/sh (bin "initdb") "-D" (pg-data-dir cfg))]
     (if (= 0 (:exit res))
       (log/info (:out res))
       (throw (Exception. (str res))))
     (when-let [err (:err res)] (log/warn err))))
 
-(defn pid []
-  (let [cfg (get-node)
-        pth (pg-data-dir cfg "/postmaster.pid")]
+(defn pid [lcfg]
+  (let [pth (pg-data-dir lcfg "/postmaster.pid")]
     (when (.exists (io/file pth))
       (first (str/split (slurp pth) #"\n")))))
 
-(defn start [lcfg]
-  (if (.exists (io/file (pg-data-dir lcfg "/postmaster.pid")))
-    (log/info "Postgres already started")
-    (let [res (pg_ctl lcfg :start)]
-      (state/assoc-in [:pg :process] (pid))
-      res)))
-
-(defn stop []
-  (pg_ctl (get-node) :stop))
-
+(defn stop [lcfg]
+  (pg_ctl lcfg :stop))
 
 (defn create-user [lcfg users]
   (doseq [[nm usr] users]
-    (log/info "Create user" nm)
-    (psql lcfg (str  "CREATE USER " nm " WITH SUPERUSER PASSWORD '" (:usr/password usr) "'"))))
+    (psql lcfg (str  "CREATE USER " (name nm) " WITH SUPERUSER PASSWORD '" (:usr/password usr) "'"))))
 
+(defn spit-config [lcfg filename content]
+  (log/info "Write " filename "\n" content)
+  (spit (pg-data-dir lcfg filename)
+        content))
+
+
+(defn update-config [gcfg lcfg]
+  (spit-config lcfg "postgresql.conf"
+               (pg-config/config gcfg lcfg))
+  (spit-config lcfg "pg_hba.conf"
+               (pg-config/hba gcfg lcfg)))
 
 (defn master [gcfg lcfg]
   (initdb lcfg)
-  (pg-config/config gcfg lcfg)
-  (pg-config/hba gcfg lcfg)
-  (start lcfg)
+  (update-config gcfg lcfg)
+  (pg_ctl lcfg :start)
   (wait-pg lcfg 10 "SELECT 1")
   (create-user lcfg (:glb/users gcfg)))
 
 (defn kill [pid sig]
   (sh/sh "kill" (str "-" (str/upper-case (name sig))) pid))
 
-(defn replica [parent-cfg {data-dir :cfg/data-dir :as replica-cfg}]
-  (let [cfg (node-config replica-cfg)
-        pgpass-path (str data-dir "/.pgpass")
-        args [(bin "pg_basebackup")
-              "-w"
-              "-h" (:host parent-cfg)
-              "-p" (str (:port parent-cfg))
-              "-U" (get-in parent-cfg [:user :name])
-              "-c" "fast"
-              "-D" (pg-data-dir cfg)
-              :env {"PGPASSFILE" pgpass-path}]]
-
-    (sh! "mkdir" "-p" data-dir)
-    (sh! "chmod" "0700" data-dir)
-    (spit pgpass-path
-          (let [{{u :name pwd :password} :user h :host p :port} parent-cfg]
-            (str h ":" p ":*:" u ":" pwd "\n")))
-    (log/info "chmod .pgpass")
+(defn base-backup [gcfg pcfg lcfg]
+  (let [pswd (get-in gcfg [:glb/users :usr/replication :usr/password])
+        phost (:lcl/host pcfg)
+        pport (get-in pcfg [:lcl/postgres :pg/port])
+        pgpass-path (str (:lcl/data-dir lcfg)  "/.pgpass")
+        pgpass-content (str phost ":" pport ":*:replication:" pswd "\n")]
+    (spit pgpass-path pgpass-content)
     (sh! "chmod" "0600" pgpass-path)
-    (log/info args)
-    (let [res (apply sh/sh args)]
-      (if (= 0 (:exit res))
-        (log/info "basebackup done")
-        (throw (Exception. (str "Basebackup failed: " res)))))
-    (sh! "rm" "-f" pgpass-path)
-    (pg-config/update-config cfg)
-    (pg-config/update-hba cfg)
-    (pg-config/update-recovery parent-cfg cfg)
-    (state/assoc-in [:pg] cfg)
-    (let [res (start)]
-      (when-not (= 0 (:exit res))
-        (throw (Exception. (str res)))))
-    (wait-pg cfg 600)))
+    (sh! (bin "pg_basebackup")
+         "-w"
+         "-h" (:lcl/host pcfg)
+         "-p" (str (get-in pcfg [:lcl/postgres :pg/port]))
+         "-U" "replication"
+         "-c" "fast"
+         "-D" (pg-data-dir lcfg)
+         :env {"PGPASSFILE" pgpass-path})
+    (sh! "rm" "-f" pgpass-path)))
 
-(defn clean-up []
-  (sh/sh "rm" "-rf" "/tmp/wallogs")
-  (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
-  (sh/sh "rm" "-rf" "/tmp/node-1")
-  (sh/sh "rm" "-rf" "/tmp/node-2")
-  (sh/sh "rm" "-rf" "/tmp/node-3"))
+(defn replica [gcfg pcfg {data-dir :lcl/data-dir :as lcfg}]
+  (sh! "mkdir" "-p" data-dir)
+  (sh! "chmod" "0700" data-dir)
+  (base-backup gcfg pcfg lcfg)
+  (update-config gcfg lcfg)
 
+  (spit-config
+   lcfg "recovery.conf"
+   (pg-config/recovery gcfg pcfg lcfg))
+
+  (pg_ctl lcfg :start)
+
+  (wait-pg lcfg (get-in gcfg [:glb/recovery :tx/timeout])))
 
 (comment
-  (sh/sh "rm" "-rf" "/tmp/wallogs")
-  (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
-
-  (sh/sh "rm" "-rf" "/tmp/node-1/pg")
+  (do
+    (sh/sh "rm" "-rf" "/tmp/wallogs")
+    (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
+    (sh/sh "rm" "-rf" "/tmp/node-1")
+    (sh/sh "rm" "-rf" "/tmp/node-2")
+    (sh/sh "rm" "-rf" "/tmp/node-3"))
 
   (require '[ankusha.config :as conf])
 
@@ -170,6 +160,24 @@
 
   (conf/load-global "sample/config.edn")
 
+  (sh/sh "rm" "-rf" "/tmp/node-1/pg")
+
   (master (conf/global) (conf/local))
+
+  (pg_ctl (conf/local) :stop)
+
+  (pg_ctl (conf/local) :start)
+
+  (with-node "node-2" (pg_ctl (conf/local) :stop))
+
+  (sh/sh "rm" "-rf" "/tmp/node-2")
+
+  (with-node "node-2"
+    (conf/load-global "sample/config.edn")
+    (conf/load-local "sample/node-2.edn")
+    (replica (conf/global)
+             (with-node "node-1" (conf/local))
+             (conf/local)))
+
 
   )
