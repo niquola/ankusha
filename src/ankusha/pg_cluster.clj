@@ -15,8 +15,8 @@
   (assert (:data-dir opts))
   (let [data-dir (:data-dir opts)]
     (merge opts {:hba [[:local :all :all :trust]
-                       [:local :replication :nicola :trust]
-                       [:host  :replication :nicola "127.0.0.1/32" :trust]
+                       [:local :replication :ankus :trust]
+                       [:host  :replication :ankus "0.0.0.0/0" :md5]
                        [:host :all :all "0.0.0.0/0" :md5]]
                  :config {:max_connections 100
                           :listen_addresses "*"
@@ -42,10 +42,31 @@
   (log/info "[" (:name cfg) "]" "pg_ctl" cmd)
   (sh/sh (bin "pg_ctl") "-D" (pg-data-dir cfg) "-l" (pg-data-dir cfg "/postgres.log") (name cmd)))
 
+(defn psql [cfg sql]
+  (let [res (sh/sh "psql"
+                   "postgres"
+                   "-h" (pg-data-dir cfg)
+                   "-p" (str (:port cfg))
+                   "-c" sql)]
+    (log/info "psql:" res)
+    res))
+
+(defn wait-pg [cfg sec & [sql]]
+  (loop [n sec]
+    (if (> n 0)
+      (let [res (psql cfg (or sql "SELECT 1"))]
+        (log/info "Connect to pg:" res)
+        (when (not (= 0 (:exit res)))
+          (Thread/sleep 1000)
+          (recur (dec n))))
+      (throw (Exception. (str "Unable to connect to postgres"))))))
+
 (defn initdb [cfg]
   (log/info "[" (:name cfg) "] " "initdb -D" (pg-data-dir cfg))
   (let [res (sh/sh (bin "initdb") "-D" (pg-data-dir cfg))]
-    (log/info (:out res))
+    (if (= 0 (:exit res))
+      (log/info (:out res))
+      (throw (Exception. (str res))))
     (when-let [err (:err res)] (log/warn err))))
 
 (defn pid []
@@ -66,49 +87,103 @@
 (defn stop []
   (pg_ctl (get-node) :stop))
 
+
+(defn create-user [cfg {nm :name pswd :password}]
+  (log/info "Create user" nm )
+  (psql cfg (str  "CREATE USER " nm " WITH SUPERUSER PASSWORD '" pswd "'")))
+
 (defn master [opts]
-  (let [cfg (node-config opts)]
+  (let [cfg (merge (node-config opts)
+                   {:user {:name "ankus" :password (str (java.util.UUID/randomUUID))}})]
     (initdb cfg)
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
     (state/assoc-in [:pg] cfg)
     (start)
+    (wait-pg cfg 10 "SELECT 1")
+    (create-user cfg (:user cfg))
     cfg))
 
 (defn kill [pid sig]
   (sh/sh "kill" (str "-" (str/upper-case (name sig))) pid))
 
-
 (defn replica [parent-cfg replica-opts]
-  (let [cfg (node-config replica-opts)]
-    (log/info (bin "pg_basebackup")
-              "-h"  (pg-data-dir parent-cfg)
+  (let [cfg (node-config replica-opts)
+        pgpass-path (str (:data-dir replica-opts) "/.pgpass")
+        args [(bin "pg_basebackup")
+              "-w"
+              "-h" (:host parent-cfg)
               "-p" (str (:port parent-cfg))
+              "-U" (get-in parent-cfg [:user :name])
               "-c" "fast"
-              "-D" (pg-data-dir cfg))
-    (log/info (sh/sh (bin "pg_basebackup")
-                     "-h" (pg-data-dir parent-cfg)
-                     "-p" (str (:port parent-cfg))
-                     "-c" "fast"
-                     "-D" (pg-data-dir cfg)))
+              "-D" (pg-data-dir cfg)
+              :env {"PGPASSFILE" pgpass-path}]]
+
+    (sh/sh "mkdir" "-p" (pg-data-dir cfg))
+    (spit pgpass-path
+          (let [{{u :name pwd :password} :user h :host p :port} parent-cfg]
+            (str h ":" p ":*:" u ":" pwd "\n")))
+    (log/info "chmod .pgpass" (sh/sh "chmod" "0600" pgpass-path))
+    (log/info args)
+    (let [res (apply sh/sh args)]
+      (if (= 0 (:exit res))
+        (log/info "basebackup done")
+        (throw (Exception. (str "Basebackup failed: " res)))))
+    (sh/sh "rm" "-f" pgpass-path)
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
     (pg-config/update-recovery parent-cfg cfg)
-    (state/assoc-in [:pg] cfg)))
+    (state/assoc-in [:pg] cfg)
+    (let [res (start)]
+      (when-not (= 0 (:exit res))
+        (throw (Exception. (str res)))))
+    (wait-pg cfg 10)))
+
+(defn clean-up []
+  (sh/sh "rm" "-rf" "/tmp/wallogs")
+  (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
+  (sh/sh "rm" "-rf" "/tmp/node-1")
+  (sh/sh "rm" "-rf" "/tmp/node-2")
+  (sh/sh "rm" "-rf" "/tmp/node-3"))
 
 
 (comment
   (sh/sh "rm" "-rf" "/tmp/wallogs")
   (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
 
-  (master {:name "node-1" :port 5434})
+  (clean-up)
 
-  @state
-  (start "node-1")
-  (stop "node-1")
-  (replica "node-1" {:name "node-2" :port 5435})
-  (start "node-2")
-  (stop "node-2")
+  (for [x (enumeration-seq (java.net.NetworkInterface/getNetworkInterfaces))]
+    x)
+
+  (def cfg
+    {:name "node-1"
+     :host "192.168.0.108"
+     :port 5434
+     :data-dir "/tmp/node-1"})
+
+  (def master-cfg (master cfg))
+
+  (:user master-cfg)
+  (:host master-cfg)
+
+  (start)
+  (stop)
+
+  (sh/sh "rm" "-rf" "/tmp/node-2")
+
+  (state/with-node "node-2"
+    (replica master-cfg
+             {:name "node-2"
+              :host "192.168.0.108"
+              :port 5435
+              :data-dir "/tmp/node-2"}))
+
+  (start)
+  (state/with-node "node-2"
+    (stop))
+
+  (sh/sh "env"  :env {"UPS" "HELLO"})
 
   (replica "node-1" {:name "node-3" :port 5436})
   (start "node-3")

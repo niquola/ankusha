@@ -27,10 +27,10 @@
 (defn mk-recovery [master-cfg replica-cfg]
   (to-config
    {:standby_mode "on"
-    :primary_conninfo (to-props {:host "localhost"
+    :primary_conninfo (to-props {:host (:host master-cfg) 
                                  :port (:port master-cfg)
-                                 :user "nicola"
-                                 :password "nicola"})
+                                 :user (get-in master-cfg [:user :name]) 
+                                 :password (get-in master-cfg [:user :name])})
     :restore_command  (str "cp /tmp/wallogs/pg_xlog/%f %p")
     :archive_cleanup_command "rm -f %r"}))
 

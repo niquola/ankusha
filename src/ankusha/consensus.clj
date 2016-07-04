@@ -2,7 +2,7 @@
   (:require [clojure.tools.logging :as log]
             [taoensso.nippy :as nippy]
             [ankusha.consensus :as cluster]
-            [ankusha.state :as state]
+            [ankusha.state :as state :refer [with-node]]
             [clojure.java.shell :as sh])
   (:import (io.atomix Atomix AtomixClient AtomixReplica)
            (io.atomix.catalyst.transport Address NettyTransport)
@@ -50,9 +50,21 @@
        (.setAccessible true))
      (get instance)))
 
-(defn- cluster [rep]
+(defn- get-super-private-field [instance field-name]
+  (. (doto (first (filter (fn [x] (.. x getName (equals field-name)))
+                          (.. instance getClass getSuperclass getDeclaredFields)))
+       (.setAccessible true))
+     (get instance)))
+
+(defn- server [rep]
   (-> (get-private-field rep "server")
-      .server
+      .server))
+
+(defn- client [rep]
+  (-> (get-super-private-field rep "client")))
+
+(defn- cluster [rep]
+  (-> (server rep) 
       .cluster))
 
 (defn- members [rep]
@@ -115,6 +127,11 @@
     (.join (.join repl (addrs as)))
     (log/info "No current replica")))
 
+(defn leave []
+  (if-let [repl (get-replica)]
+    (.join (.leave repl))
+    (log/info "No current replica")))
+
 (defn shutdown []
   (if-let [repl (get-replica)]
     (try
@@ -122,11 +139,11 @@
       (.join (.shutdown repl))
          (catch Exception e
            (log/error e)))
-    (log/info "No replica")))
+    (log/error "No replica")))
 
 (defn leader []
-  (when-let [repl (get-replica)]
-    (.leader (cluster repl))))
+  (when-let [rep (get-replica)]
+    (.leader (cluster rep))))
 
 (defn status []
   (when-let [repl (get-replica)]
@@ -173,25 +190,83 @@
   (when-let [val (dvar var-nm)]
     (.join (.set val (encode v)))))
 
+(defn clean-up []
+  (sh/sh "rm" "-rf" "/tmp/node-1")
+  (sh/sh "rm" "-rf" "/tmp/node-2")
+  (sh/sh "rm" "-rf" "/tmp/node-3"))
+
 (comment "rep1"
-         (state/with-node "node-1"
-           (start {:atomix-port 4444
-                   :name "node-1"
-                   :data-dir "/tmp/node-1"})
-           (shutdown)
-           (bootstrap)
-           (dmap-put "pg-clusters" "node-1" "newone"))
+
+         (clean-up)
+
+         (with-node "node-1"
+           (future
+             (println "START NODE-1"
+                      (start {:atomix-port 4444
+                              :name "node-1"
+                              :data-dir "/tmp/node-1"}))
+             (println "BOOSTAP NODE-1"
+                      (bootstrap))))
 
 
-         (state/with-node "node-2"
+         (with-node "node-2"
+           (future
+             (start {:atomix-port 4445
+                     :name "node-2"
+                     :data-dir "/tmp/node-2"})
+             (join [{:host "localhost" :port 4444}])))
+
+         (with-node "node-2"
+           (future
+             (start {:atomix-port 4445
+                     :name "node-2"
+                     :data-dir "/tmp/node-2"})
+             (bootstrap)))
+
+
+         (with-node "node-3"
            (start {:atomix-port 4446
                    :name "node-3"
                    :data-dir "/tmp/node-3"})
+           (join [{:host "localhost" :port 4444}]))
 
-           (bootstrap)
+         (with-node "node-3"
+           (start {:atomix-port 4446
+                   :name "node-3"
+                   :data-dir "/tmp/node-3"})
+           (bootstrap))
 
-           (join [{:host "localhost" :port 4444}
-                  {:host "localhost" :port 4445}]))
+
+
+         (with-node "node-1"
+           (future (println "NODE1" (shutdown))))
+
+         (state/with-node "node-2"
+           (future (shutdown)))
+
+         (state/with-node "node-3"
+           (future (shutdown)))
+
+         (with-node "node-3"
+           (future (.close (client (get-replica)))))
+
+         (with-node "node-3"
+           (xmethods
+            (get-private-field (get-replica) "clusterManager")))
+
+         (state/with-node "node-3"
+           (future (.shutdown (server (get-replica)))))
+
+         (state/with-node "node-3"
+           (.leave (cluster (get-replica))))
+
+         (status)
+         (shutdown)
+
+         (with-node "node-2"
+           (status)
+           )
+
 
          (status)
          (leader))

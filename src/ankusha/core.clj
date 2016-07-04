@@ -9,7 +9,6 @@
 
 
 (defn bootstrap-master [cfg]
-  (cluster/shutdown)
 
   (cluster/start cfg)
   (cluster/bootstrap)
@@ -45,7 +44,7 @@
 (defn -main [] )
 
 (comment
-  (web/start)
+  (web/start 8080)
   (web/stop)
 
   (clean-up)
@@ -58,21 +57,20 @@
       :name "node-1"
       :data-dir "/tmp/node-1"}))
 
+  (future
+    (println (cluster/dmap-get "nodes" (cluster/dvar! "master"))))
+
   (cluster/status)
+  (cluster/leader)
   (pg/pid)
 
-  (future
-    (stop-node))
+  (future (stop-node))
 
   (state/with-node "node-3"
     (future (stop-node)))
 
   (state/with-node "node-2"
     (future (stop-node)))
-
-  (cluster/dvar! "master")
-  (cluster/dmap! "nodes")
-  (cluster/leader)
 
   (state/with-node "node-2"
     (bootstrap-replica
@@ -81,7 +79,6 @@
       :port 5435
       :data-dir "/tmp/node-2"}
      [{:port 4444 :host "localhost"}]))
-
 
   (state/with-node "node-2"
     (cluster/shutdown)
@@ -95,6 +92,20 @@
       :data-dir "/tmp/node-3"}
      [{:port 4444 :host "localhost"}
       {:port 4445 :host "localhost"}]))
+
+  (cluster/dmap! "nodes")
+
+  (state/with-node "node-1"
+    (pg/stop)
+    (future (stop-node)))
+
+  (state/with-node "node-2"
+    (pg/stop)
+    (future (stop-node)))
+
+  (state/with-node "node-3"
+    (pg/stop)
+    (future (stop-node)))
 
   )
 
