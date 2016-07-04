@@ -26,8 +26,7 @@
 
 (defn parse-addrs [addrs]
   (map (fn [x]
-         (let [a (str/split x #":")]
-           {:host (get a 0) :port (Integer/parseInt (get a 1))}))
+         (let [a (str/split x #":")] {:host (get a 0) :port (Integer/parseInt (get a 1))}))
        (str/split addrs #",")))
 
 (defn bootstrap-replica [local-config-path addr-str]

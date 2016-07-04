@@ -34,7 +34,7 @@
 (s/fdef replica :args :cfg/local-config)
 
 (defn- replica ^AtomixReplica
-  [{data-dir :cfg/data-dir {port :ax/port host :ax/host} :cfg/atomix :as cfg}]
+  [{data-dir :cfg/data-dir {port :ax/port} :cfg/atomix host :cfg/host :as cfg}]
   (log/info "Init replica at " (str  host ":" port))
   (sh/sh "mkdir" "-p" data-dir)
   (-> (AtomixReplica/builder (addr {:host host :port port}))

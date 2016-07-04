@@ -1,9 +1,10 @@
-#:cfg{:name "node-1"
+#:lcl{:name "node-1"
+      :host "127.0.0.1"
       :postgres-bin "/usr/lib/postgresql/9.5/bin"
       :data-dir "/tmp/node-1"
       :web #:web{:port 8080}
-      :atomix   #:ax{:port 4444
-                     :host "127.0.0.1"}
+      :atomix   #:ax{:port 4444}
       :postgres #:pg{:port 5434
-                     :host "127.0.0.1"
+                     :restore_command "cp /tmp/wallogs/pg_xlog/%f %p"
+                     :archive_cleanup_command "rm -f %r"
                      :archive_command "cp %p /tmp/wallogs/%p"}}

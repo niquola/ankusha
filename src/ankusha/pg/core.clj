@@ -75,7 +75,7 @@
       (throw (Exception. (str "Unable to connect to postgres"))))))
 
 (defn initdb [cfg]
-  (log/info "[" (:name cfg) "] " "initdb -D" (pg-data-dir cfg))
+  (log/info "[" (:cfg/name cfg) "] " "initdb -D" (pg-data-dir cfg))
   (let [res (sh/sh (bin "initdb") "-D" (pg-data-dir cfg))]
     (if (= 0 (:exit res))
       (log/info (:out res))
@@ -88,41 +88,37 @@
     (when (.exists (io/file pth))
       (first (str/split (slurp pth) #"\n")))))
 
-(defn start []
-  (if-let [cfg (get-node)]
-    (if (.exists (io/file (pg-data-dir cfg "/postmaster.pid")))
-      (log/info "Postgres already started")
-      (let [res (pg_ctl cfg :start)]
-        (state/assoc-in [:pg :process] (pid))
-        res))
-    (log/info "Node not initialized")))
+(defn start [lcfg]
+  (if (.exists (io/file (pg-data-dir lcfg "/postmaster.pid")))
+    (log/info "Postgres already started")
+    (let [res (pg_ctl lcfg :start)]
+      (state/assoc-in [:pg :process] (pid))
+      res)))
 
 (defn stop []
   (pg_ctl (get-node) :stop))
 
 
-(defn create-user [cfg {nm :name pswd :password}]
-  (log/info "Create user" nm )
-  (psql cfg (str  "CREATE USER " nm " WITH SUPERUSER PASSWORD '" pswd "'")))
+(defn create-user [lcfg users]
+  (doseq [[nm usr] users]
+    (log/info "Create user" nm)
+    (psql lcfg (str  "CREATE USER " nm " WITH SUPERUSER PASSWORD '" (:usr/password usr) "'"))))
 
-(defn master [opts]
-  (let [cfg (merge (node-config opts)
-                   {:user {:name "ankus" :password (str (java.util.UUID/randomUUID))}})]
-    (initdb cfg)
-    (pg-config/update-config cfg)
-    (pg-config/update-hba cfg)
-    (state/assoc-in [:pg] cfg)
-    (start)
-    (wait-pg cfg 10 "SELECT 1")
-    (create-user cfg (:user cfg))
-    cfg))
+
+(defn master [gcfg lcfg]
+  (initdb lcfg)
+  (pg-config/config gcfg lcfg)
+  (pg-config/hba gcfg lcfg)
+  (start lcfg)
+  (wait-pg lcfg 10 "SELECT 1")
+  (create-user lcfg (:glb/users gcfg)))
 
 (defn kill [pid sig]
   (sh/sh "kill" (str "-" (str/upper-case (name sig))) pid))
 
-(defn replica [parent-cfg replica-opts]
-  (let [cfg (node-config replica-opts)
-        pgpass-path (str (:data-dir replica-opts) "/.pgpass")
+(defn replica [parent-cfg {data-dir :cfg/data-dir :as replica-cfg}]
+  (let [cfg (node-config replica-cfg)
+        pgpass-path (str data-dir "/.pgpass")
         args [(bin "pg_basebackup")
               "-w"
               "-h" (:host parent-cfg)
@@ -132,8 +128,8 @@
               "-D" (pg-data-dir cfg)
               :env {"PGPASSFILE" pgpass-path}]]
 
-    (sh! "mkdir" "-p" (:data-dir cfg))
-    (sh! "chmod" "0700" (:data-dir cfg))
+    (sh! "mkdir" "-p" data-dir)
+    (sh! "chmod" "0700" data-dir)
     (spit pgpass-path
           (let [{{u :name pwd :password} :user h :host p :port} parent-cfg]
             (str h ":" p ":*:" u ":" pwd "\n")))
@@ -166,44 +162,14 @@
   (sh/sh "rm" "-rf" "/tmp/wallogs")
   (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
 
-  (clean-up)
+  (sh/sh "rm" "-rf" "/tmp/node-1/pg")
 
-  (for [x (enumeration-seq (java.net.NetworkInterface/getNetworkInterfaces))]
-    x)
+  (require '[ankusha.config :as conf])
 
-  (def cfg
-    {:name "node-1"
-     :host "127.0.0.1"
-     :port 5434
-     :data-dir "/tmp/node-1"})
+  (conf/load-local "sample/node-1.edn")
 
-  (def master-cfg (master cfg))
+  (conf/load-global "sample/config.edn")
 
-  (:user master-cfg)
-  (:host master-cfg)
+  (master (conf/global) (conf/local))
 
-  (start)
-  (stop)
-
-  (sh! "rm" "-rf" "/tmp/node-2")
-
-  (state/with-node "node-2"
-    (replica master-cfg
-             {:name "node-2"
-              :host "127.0.0.1"
-              :port 5435
-              :data-dir "/tmp/node-2"}))
-
-  (start)
-  (state/with-node "node-2" (stop))
-
-
-  (state/with-node "node-3"
-    (replica master-cfg 
-             {:name "node-3"
-              :host "127.0.0.1"
-              :port 5436
-              :data-dir "/tmp/node-3"}))
-
-  (state/with-node "node-3" (stop))
   )
