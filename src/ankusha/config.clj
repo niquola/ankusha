@@ -30,7 +30,7 @@
     :primary_conninfo (to-props {:host (:host master-cfg) 
                                  :port (:port master-cfg)
                                  :user (get-in master-cfg [:user :name]) 
-                                 :password (get-in master-cfg [:user :name])})
+                                 :password (get-in master-cfg [:user :password])})
     :restore_command  (str "cp /tmp/wallogs/pg_xlog/%f %p")
     :archive_cleanup_command "rm -f %r"}))
 

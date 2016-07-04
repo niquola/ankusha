@@ -11,6 +11,15 @@
 
 (defn bin [util] (str (:bin @config) "/" util))
 
+(defn sh! [& args]
+  (log/info args)
+  (let [res (apply sh/sh args)]
+    (if (= 0 (:exit res))
+      res
+      (do
+        (log/error res)
+        (throw (Exception. (str res)))))))
+
 (defn node-config [opts]
   (assert (:data-dir opts))
   (let [data-dir (:data-dir opts)]
@@ -119,17 +128,19 @@
               "-D" (pg-data-dir cfg)
               :env {"PGPASSFILE" pgpass-path}]]
 
-    (sh/sh "mkdir" "-p" (pg-data-dir cfg))
+    (sh! "mkdir" "-p" (:data-dir cfg))
+    (sh! "chmod" "0700" (:data-dir cfg))
     (spit pgpass-path
           (let [{{u :name pwd :password} :user h :host p :port} parent-cfg]
             (str h ":" p ":*:" u ":" pwd "\n")))
-    (log/info "chmod .pgpass" (sh/sh "chmod" "0600" pgpass-path))
+    (log/info "chmod .pgpass")
+    (sh! "chmod" "0600" pgpass-path)
     (log/info args)
     (let [res (apply sh/sh args)]
       (if (= 0 (:exit res))
         (log/info "basebackup done")
         (throw (Exception. (str "Basebackup failed: " res)))))
-    (sh/sh "rm" "-f" pgpass-path)
+    (sh! "rm" "-f" pgpass-path)
     (pg-config/update-config cfg)
     (pg-config/update-hba cfg)
     (pg-config/update-recovery parent-cfg cfg)
@@ -137,7 +148,7 @@
     (let [res (start)]
       (when-not (= 0 (:exit res))
         (throw (Exception. (str res)))))
-    (wait-pg cfg 10)))
+    (wait-pg cfg 600)))
 
 (defn clean-up []
   (sh/sh "rm" "-rf" "/tmp/wallogs")
@@ -158,7 +169,7 @@
 
   (def cfg
     {:name "node-1"
-     :host "192.168.0.108"
+     :host "127.0.0.1"
      :port 5434
      :data-dir "/tmp/node-1"})
 
@@ -170,21 +181,24 @@
   (start)
   (stop)
 
-  (sh/sh "rm" "-rf" "/tmp/node-2")
+  (sh! "rm" "-rf" "/tmp/node-2")
 
   (state/with-node "node-2"
     (replica master-cfg
              {:name "node-2"
-              :host "192.168.0.108"
+              :host "127.0.0.1"
               :port 5435
               :data-dir "/tmp/node-2"}))
 
   (start)
-  (state/with-node "node-2"
-    (stop))
+  (state/with-node "node-2" (stop))
 
-  (sh/sh "env"  :env {"UPS" "HELLO"})
 
-  (replica "node-1" {:name "node-3" :port 5436})
-  (start "node-3")
-  (stop "node-3"))
+  (replica master-cfg 
+           {:name "node-3"
+            :host "127.0.0.1"
+            :port 5436
+            :data-dir "/tmp/node-3"})
+
+  (state/with-node "node-3" (stop))
+  )
