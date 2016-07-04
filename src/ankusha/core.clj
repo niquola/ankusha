@@ -1,51 +1,92 @@
 (ns ankusha.core
-  (:require [ankusha.pg-cluster :as pg]
+  (:require [ankusha.pg.core :as pg]
             [clojure.java.shell :as sh]
+            [ankusha.config :as config]
             [clojure.tools.logging :as log]
             [ankusha.health :as health]
+            [ankusha.failover :as failover]
             [ankusha.web :as web]
-            [ankusha.state :as state]
-            [ankusha.consensus :as cluster])
+            [ankusha.state :as state :refer [with-node]]
+            [ankusha.atomix.core :as ax]
+            [clojure.string :as str])
   (:gen-class))
 
-(defn bootstrap-master [cfg]
-  (cluster/start cfg)
-  (cluster/bootstrap)
+(defn bootstrap-master [local-config-path global-config-path]
+  (config/load-local local-config-path)
+  (let [cfg   (config/local)
+        g-cfg (config/load-global global-config-path)]
+    (ax/start cfg)
+    (ax/bootstrap)
+    (ax/dvar-set "config" g-cfg)
 
-  (let [result (pg/master cfg)]
-    (cluster/dmap-put "nodes" (:name cfg) result)
-    (cluster/dvar-set "master" result)
-    (health/start-health-check)))
+    (let [result (pg/master g-cfg cfg)]
+      (ax/dmap-put "nodes" (:cfg/name cfg) result)
+      (ax/dvar-set "master" result))))
 
-(defn bootstrap-replica [cfg addrs]
-  (future
-    (cluster/start cfg)
-    (cluster/join addrs)
 
-    (when-let [master-cfg (cluster/dvar! "master" )]
-      (log/info "Found master:" master-cfg)
-      (log/info "Master config loaded:" master-cfg)
-      (pg/replica master-cfg cfg)
-      (cluster/dmap-put  "nodes" (:name cfg) cfg)
-      (health/start-health-check))))
+(defn parse-addrs [addrs]
+  (map (fn [x]
+         (let [a (str/split x #":")]
+           {:host (get a 0) :port (Integer/parseInt (get a 1))}))
+       (str/split addrs #",")))
 
-(defn stop-node []
-  (health/stop-health-check)
+(defn bootstrap-replica [local-config-path addr-str]
+  (let [cfg   (config/load-local local-config-path)
+        addrs (parse-addrs addr-str)]
+    (ax/start cfg)
+    (ax/join addrs)))
+
+(defn stop []
   (pg/stop)
-  (cluster/shutdown))
+  (web/stop)
+  (health/stop)
+  (failover/stop)
+  (ax/shutdown))
 
-(defn start-node []
-  (pg/start)
-  (cluster/start (state/get-in [:pg]))
-  (cluster/bootstrap)
-  (health/start-health-check))
+(defn start [local-config]
+  ;; check exists
+  (let [cfg (config/load-local local-config)]
+    (ax/start cfg)
+    (ax/bootstrap)
+    (pg/start)
+    (web/start)
+    (health/start)
+    (failover/start)))
 
-(defn clean-up []
-  (sh/sh "rm" "-rf" "/tmp/wallogs")
-  (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
-  (sh/sh "rm" "-rf" "/tmp/node-1")
-  (sh/sh "rm" "-rf" "/tmp/node-2")
-  (sh/sh "rm" "-rf" "/tmp/node-3"))
+(comment
+  (defn bootstrap-master [cfg]
+    (ax/start cfg)
+    (ax/bootstrap)
+
+    (let [result (pg/master cfg)]
+      (ax/dmap-put "nodes" (:name cfg) result)
+      (ax/dvar-set "master" result)
+      (health/start)))
+
+  (defn bootstrap-replica [cfg addrs]
+    (future
+      (ax/start cfg)
+      (ax/join addrs)
+
+      (when-let [master-cfg (ax/dvar! "master" )]
+        (log/info "Found master:" master-cfg)
+        (log/info "Master config loaded:" master-cfg)
+        (pg/replica master-cfg cfg)
+        (ax/dmap-put  "nodes" (:name cfg) cfg)
+        (health/start))))
+
+  (defn stop-node []
+    (health/stop)
+    (pg/stop)
+    (ax/shutdown))
+
+  (defn start-node []
+    (pg/start)
+    (ax/start (state/get-in [:pg]))
+    (ax/bootstrap)
+    (health/start))
+  )
+
 
 (defn -main [] )
 
@@ -53,76 +94,36 @@
   (web/start 8080)
   (web/stop)
 
-  (clean-up)
+  (do
+    (sh/sh "rm" "-rf" "/tmp/wallogs")
+    (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
+    (sh/sh "rm" "-rf" "/tmp/node-1")
+    (sh/sh "rm" "-rf" "/tmp/node-2")
+    (sh/sh "rm" "-rf" "/tmp/node-3"))
 
-  (state/with-node "node-1"
-    (bootstrap-master
-     {:atomix-port 4444
-      :host "127.0.0.1"
-      :port 5434
-      :name "node-1"
-      :data-dir "/tmp/node-1"}))
+  (state/with-node "node-1" (bootstrap-master  "sample/node-1.edn" "sample/config.edn"))
 
-  (state/with-node "node-1" (cluster/dmap! "nodes"))
+  (state/with-node "node-2" (bootstrap-replica "sample/node-2.edn" "127.0.0.1:4444"))
+  (state/with-node "node-2" (bootstrap-replica "sample/node-3.edn" "127.0.0.1:4444"))
 
+  (ax/status)
 
-  (state/with-node "node-2" (cluster/dmap! "nodes"))
-  (state/with-node "node-3"
-    (log/info "HERE")
-    (future (log/info  (cluster/dmap! "nodes"))))
+  (ax/dvar! "config")
+
+  (with-node "node-1"
+    (ax/dvar! "config"))
 
 
-  (cluster/status)
-  (cluster/leader)
+  (state/with-node "node-1" (stop))
+  (state/with-node "node-3" (stop))
+  (state/with-node "node-3" (stop))
+
+  (state/with-node "node-1" (start "sample/node-1.edn"))
+  (state/with-node "node-3" (start "sample/node-2.edn"))
+  (state/with-node "node-3" (start "sample/node-3.edn"))
+
+  (ax/status)
+  (ax/leader)
   (pg/pid)
-
-  (future (stop-node))
-
-  (state/with-node "node-3"
-    (future (stop-node)))
-
-  (state/with-node "node-2"
-    (state/get-in [:pg]))
-
-  (state/with-node "node-2"
-    (future (stop-node)))
-
-  (state/with-node "node-2"
-    (bootstrap-replica
-     {:atomix-port 4445
-      :name "node-2"
-      :host "127.0.0.1"
-      :port 5435
-      :data-dir "/tmp/node-2"}
-     [{:port 4444 :host "localhost"}]))
-
-  (state/with-node "node-2"
-    (cluster/shutdown))
-
-  (state/with-node "node-3"
-    (bootstrap-replica
-     {:atomix-port 4446
-      :name "node-3"
-      :host "127.0.0.1"
-      :port 5436
-      :data-dir "/tmp/node-3"}
-     [{:port 4444 :host "localhost"}
-      {:port 4445 :host "localhost"}]))
-
-  (state/with-node "node-3"
-    (cluster/leave)
-    (future (stop-node)))
-
-  (state/with-node "node-2"
-    (future (stop-node)))
-
-  (state/with-node "node-2"
-    (state/get-in [])
-    #_(start-node))
-
-  (state/with-node "node-3"
-    (pg/stop)
-    (future (stop-node)))
-
   )
 

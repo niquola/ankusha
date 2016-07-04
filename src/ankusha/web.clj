@@ -1,7 +1,8 @@
 (ns ankusha.web
-  (:require [ankusha.swagger :as swagger]
-            [ankusha.consensus :as cluster]
+  (:require [route-map.swagger :as swagger]
+            [ankusha.atomix.core :as ax]
             [ankusha.state :as state]
+            [ankusha.config :as config]
             [org.httpkit.server :as http]
             [cheshire.core :as json]
             [route-map.core :as route]))
@@ -24,27 +25,27 @@
 (defn pg-status
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json (cluster/dmap! "nodes")))
+  (json (ax/dmap! "nodes")))
 
 (defn health
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json (cluster/dmap! "nodes-health")))
+  (json (ax/dmap! "nodes-health")))
 
 (defn status
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json (cluster/status)))
+  (json (ax/status)))
 
 (defn master
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (json (cluster/dvar! "master")))
+  (json (ax/dvar! "master")))
 
 (defn connection
   {:swagger {:summary "List nodes in cluster"}}
   [req]
-  (let [master (cluster/dvar! "master")]
+  (let [master (ax/dvar! "master")]
     (json {:host (:host master)
            :port (:port master)
            :user (get-in master [:user :name])
@@ -56,12 +57,19 @@
   (json (cluster/dmap-get "nodes-health" (state/current))))
 
 (defn register
-  {:swagger {:summary "Register node in cluster"}}
+  {:swagger {:summary "Register node in ax"}}
   [req]
   (json {:message "Success"} 201))
 
+
+(defn local-config
+  {:swagger {:summary "..."}}
+  [req]
+  (json (config/local)))
+
 (def routes
   {:GET #'swagger
+   "local" {:GET #'local-config}
    "status" {:GET #'local-status}
    "postgres" {"status" {:GET #'pg-status}
                "health" {:GET #'health}
@@ -78,13 +86,14 @@
 (defn stop []
   (when-let [s (state/get-in [:web])] (s)))
 
-(defn start [port]
+(defn start []
   (stop)
-  (let [srv (http/run-server #'handler {:port port})]
+  (let [cfg (config/local)
+        port (get-in cfg [:web :port])
+        srv (http/run-server #'handler {:port port})]
     (state/assoc-in [:web] srv)))
 
 (comment
   (start 8888)
-  (stop)
-  )
+  (stop))
 

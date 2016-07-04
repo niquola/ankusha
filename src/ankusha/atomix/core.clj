@@ -1,7 +1,8 @@
-(ns ankusha.consensus
+(ns ankusha.atomix.core
   (:require [clojure.tools.logging :as log]
-            [taoensso.nippy :as nippy]
-            [ankusha.consensus :as cluster]
+            [ankusha.util :refer [xmethods get-private-field get-super-private-field]]
+            [clojure.spec :as s]
+            [clojure.edn :as edn]
             [ankusha.state :as state :refer [with-node]]
             [clojure.java.shell :as sh])
   (:import (io.atomix Atomix AtomixClient AtomixReplica)
@@ -17,9 +18,9 @@
 (defn get-replica []
   (state/get-in [:atomix :replica]))
 
-(defn- storage [cfg]
+(defn- storage [data-dir]
   (-> (Storage/builder)
-      (.withDirectory (str (:data-dir cfg) "/atomix"))
+      (.withDirectory (str data-dir "/atomix"))
       (.build)))
 
 (defn- addr ^Address [{h :host p :port}] (Address. h p))
@@ -30,32 +31,16 @@
   (-> (InetAddress/getLocalHost)
       (.getHostName)))
 
+(s/fdef replica :args :cfg/local-config)
+
 (defn- replica ^AtomixReplica
-  [cfg]
-  (sh/sh "mkdir" "-p" (:data-dir cfg))
-  (-> (AtomixReplica/builder
-       (addr {:host (localhost) :port (:atomix-port cfg)}))
+  [{data-dir :cfg/data-dir {port :ax/port host :ax/host} :cfg/atomix :as cfg}]
+  (log/info "Init replica at " (str  host ":" port))
+  (sh/sh "mkdir" "-p" data-dir)
+  (-> (AtomixReplica/builder (addr {:host host :port port}))
       (.withTransport (NettyTransport.))
-      (.withStorage (storage cfg))
+      (.withStorage (storage data-dir))
       (.build)))
-
-
-(defn- xmethods [obj]
-  (sort
-   (map #(.getName %)
-        (.getMethods (type obj)))))
-
-(defn- get-private-field [instance field-name]
-  (. (doto (first (filter (fn [x] (.. x getName (equals field-name)))
-                          (.. instance getClass getDeclaredFields)))
-       (.setAccessible true))
-     (get instance)))
-
-(defn- get-super-private-field [instance field-name]
-  (. (doto (first (filter (fn [x] (.. x getName (equals field-name)))
-                          (.. instance getClass getSuperclass getDeclaredFields)))
-       (.setAccessible true))
-     (get instance)))
 
 (defn- server [rep]
   (-> (get-private-field rep "server")
@@ -152,12 +137,10 @@
          (map (fn [m] [(str (.address m)) (str (.status m))])))))
 
 (defn encode [v]
-  (String. (nippy/freeze v)))
+  (String. (pr-str v)))
 
 (defn decode [s]
-  (nippy/thaw (.getBytes s)))
-
-(decode (encode {:a 1}))
+  (edn/read-string s))
 
 (defn dmap [map-name]
   (when-let [repl (get-replica)]
@@ -218,6 +201,8 @@
                               :data-dir "/tmp/node-1"}))
              (println "BOOSTAP NODE-1"
                       (bootstrap))))
+
+         (shutdown)
 
 
          (dvar-set "master" {:test 1})

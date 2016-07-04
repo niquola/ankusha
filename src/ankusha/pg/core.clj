@@ -1,6 +1,6 @@
-(ns ankusha.pg-cluster
+(ns ankusha.pg.core
   (:require [clojure.string :as str]
-            [ankusha.config :as pg-config :refer [pg-data-dir]]
+            [ankusha.pg.config :as pg-config :refer [pg-data-dir]]
             [ankusha.state :as state]
             [clojure.java.shell :as sh]
             [clojure.tools.logging :as log]
@@ -60,9 +60,9 @@
     (log/info "psql:" res)
     res))
 
-(defn sql [sql]
+(defn sql [q]
   (when-let [cfg (state/get-in [:pg])]
-    (psql cfg sql)))
+    (psql cfg q)))
 
 (defn wait-pg [cfg sec & [sql]]
   (loop [n sec]

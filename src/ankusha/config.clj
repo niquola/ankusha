@@ -1,63 +1,58 @@
 (ns ankusha.config
-  (:require [clojure.string :as str]
-            [clojure.tools.logging :as log]
-            [clojure.core.async :as async :refer [<!]]))
+  (:require [ankusha.state :as state]
+            [clojure.spec :as s]
+            [clojure.edn :as edn]
+            [clojure.java.io :as io]))
 
-(defn pg-data-dir [cfg & args]
-  (apply str (:data-dir cfg) "/pg" (when-not (empty? args) (str "/" (str/join "/" args)))))
+(defn file-exists? [fl] (.exists (io/file fl)))
+(defn file-path? [fl] (re-matches #"/.*" fl))
+(defn ipv4? [x] (re-matches #"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$" x))
 
-(defn to-config [cfg]
-  (with-out-str
-    (doseq [[k v] cfg]
-      (println (name k) " = " (if (string? v) (str "'" v "'") v)))))
+(s/def :web/port number?)
+(s/def :ax/host ipv4?)
+(s/def :pg/host ipv4?)
 
-(defn to-props [cfg]
-  (str/join " " (for [[k v] cfg] (str (name k) "=" v))))
+(s/def :cfg/postgres-bin file-exists?)
+(s/def :cfg/data-dir file-path?)
+(s/def :cfg/web (s/keys :req [:web/port]))
+(s/def :cfg/atomix (s/keys :req [:ax/port :ax/host]))
+(s/def :cfg/postgres (s/keys :req [:pg/port :pg/host] :opt [:pg/archive_command]))
 
-(to-props {:a 1 :b 3})
 
-(defn mk-config [cfg]
-  (to-config (:config cfg)))
+(s/def :cfg/local-config (s/keys :req [:cfg/data-dir :cfg/name :cfg/postgres-bin :cfg/postgres]))
 
-(defn mk-hba [cfg]
-  (with-out-str
-    (doseq [ks (:hba cfg)]
-      (println (str/join "\t" (map name ks))))))
+(defn load-config [filepath]
+  (edn/read-string (slurp filepath)))
 
-(defn mk-recovery [master-cfg replica-cfg]
-  (to-config
-   {:standby_mode "on"
-    :primary_conninfo (to-props {:host (:host master-cfg) 
-                                 :port (:port master-cfg)
-                                 :user (get-in master-cfg [:user :name]) 
-                                 :password (get-in master-cfg [:user :password])})
-    :restore_command  (str "cp /tmp/wallogs/pg_xlog/%f %p")
-    :archive_cleanup_command "rm -f %r"}))
+(defn load-global [filepath]
+  (edn/read-string (slurp filepath)))
 
-(defn update-hba [cfg]
-  (let [hba (mk-hba cfg)
-        conf_path (pg-data-dir cfg "pg_hba.conf")]
-    (log/info "Update pg_hbal:\n" hba)
-    (spit conf_path hba)))
+(defn load-local [filepath]
+  (let [cfg (load-config filepath)]
+    (if (s/valid? :cfg/local-config cfg)
+      (do
+        (state/assoc-in [:local-config] cfg)
+        cfg)
+      (throw (Exception. (with-out-str (s/explain :cfg/local-config cfg)))))))
 
-(defn update-config [cfg]
-  (let [pgconf (mk-config cfg)
-        conf_path (pg-data-dir cfg "postgresql.conf")]
-    (log/info "Update config:\n" pgconf)
-    (spit conf_path pgconf)))
+(defn local []
+  (state/get-in [:local-config]))
 
-(defn update-recovery [master-cfg replica-cfg]
-  (let [txt (mk-recovery master-cfg replica-cfg)
-        conf_path (pg-data-dir replica-cfg "/recovery.conf")]
-    (log/info "Update recovery.conf [" conf_path "]\n" txt )
-    (spit conf_path txt)))
 
-;; (defn sighup-params [cfg]
-;;   (pg/exec (conn-uri cfg)
-;;            {:select [:name]
-;;             :from [:pg_settings]
-;;             :where [:= :context "sighup"]}))
+(defn get-local [])
 
 (comment
-  (update-config config)
-  (reconfigure config))
+
+  (with-out-str
+    (s/explain ::local-config
+               (load-config "sample/node-1.edn")))
+
+  (load-config "sample/node-1.edn")
+
+  (load-local "sample/node-1.edn")
+
+  (local)
+
+
+
+  )

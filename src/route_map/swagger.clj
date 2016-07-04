@@ -1,4 +1,4 @@
-(ns ankusha.swagger
+(ns route-map.swagger
   (:require [clojure.string :as str]))
 
 (defn method? [k]

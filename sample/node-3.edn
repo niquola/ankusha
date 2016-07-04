@@ -1,0 +1,11 @@
+#:cfg{:name "node-3"
+      :postgres-bin "/usr/lib/postgresql/9.5/bin"
+      :data-dir "/tmp/node-3"
+      :web #:web{:port 8082}
+      :atomix   #:ax{:port 4446
+                     :host "127.0.0.1"
+                     :join [{:host "127.0.0.1" :port 4444}]
+                     :discovery ["http://localhost:8080/discovery"]}
+      :postgres #:pg{:port 5435
+                     :host "127.0.0.1"
+                     :archive_command "cp %p /tmp/wallogs/%p"}}

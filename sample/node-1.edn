@@ -1,0 +1,9 @@
+#:cfg{:name "node-1"
+      :postgres-bin "/usr/lib/postgresql/9.5/bin"
+      :data-dir "/tmp/node-1"
+      :web #:web{:port 8080}
+      :atomix   #:ax{:port 4444
+                     :host "127.0.0.1"}
+      :postgres #:pg{:port 5434
+                     :host "127.0.0.1"
+                     :archive_command "cp %p /tmp/wallogs/%p"}}
