@@ -98,9 +98,9 @@
 (defn bootstrap []
   (-> (get-replica) .bootstrap .get))
 
-(defn start [cfg]
-  (log/info "Starting replica" cfg)
-  (let [repl (replica cfg)]
+(defn start [lcfg]
+  (log/info "Starting replica" lcfg)
+  (let [repl (replica lcfg)]
     (subscribe repl)
     (on-join repl)
     (on-leave repl)
@@ -178,82 +178,48 @@
     (when-let [ev (.join (.get val))]
       (decode ev))))
 
-(defn dvar-set [var-nm v]
-  (when-let [val (dvar var-nm)]
-    (.join (.set val (encode v)))))
+(defn dvar-set
+  ([var-nm v]
+   (when-let [val (dvar var-nm)]
+     (.join (.set val (encode v)))))
+  ([var-nm v ttl]
+    (when-let [val (dvar var-nm)]
+      (.join (.set val (encode v) (java.time.Duration/ofSeconds ttl))))))
 
-(defn clean-up []
-  (sh/sh "rm" "-rf" "/tmp/node-1")
-  (sh/sh "rm" "-rf" "/tmp/node-2")
-  (sh/sh "rm" "-rf" "/tmp/node-3"))
+
+
 
 (comment "rep1"
 
-         (clean-up)
+         (do (sh/sh "rm" "-rf" "/tmp/node-1")
+             (sh/sh "rm" "-rf" "/tmp/node-2")
+             (sh/sh "rm" "-rf" "/tmp/node-3"))
+
+         (require '[ankusha.config :as conf])
 
          (with-node "node-1"
-           (future
-             (println "START NODE-1"
-                      (start {:atomix-port 4444
-                              :name "node-1"
-                              :data-dir "/tmp/node-1"}))
-             (println "BOOSTAP NODE-1"
-                      (bootstrap))))
-
-         (shutdown)
-
-
-         (dvar-set "master" {:test 1})
-
-         (dvar! "master")
-
-         (dset "myset")
-         (dset-put "myset" "myval")
-         (dmap-put "nodes" "node-2" {:a 1})
-
-
-         (dmap! "nodes")
-
-         (with-node "node-2"
-           (dmap! "nodes"))
-
-         (with-node "node-3"
-           (dmap! "nodes"))
-
-         (dmap-put "nodes" "n1" {:test 1})
-
-         (dmap-get "nodes" "n1")
-
-
-         (with-node "node-3"
-           (dmap-get "nodes" "n1"))
-
-         (with-node "node-2"
-           (future
-             (start {:atomix-port 4445
-                     :name "node-2"
-                     :data-dir "/tmp/node-2"})
-             (join [{:host "localhost" :port 4444}])))
-
-         (with-node "node-2"
-           (future
-             (start {:atomix-port 4445
-                     :name "node-2"
-                     :data-dir "/tmp/node-2"})
-             (bootstrap)))
-
-
-         (with-node "node-3"
-           (start {:atomix-port 4446
-                   :name "node-3"
-                   :data-dir "/tmp/node-3"})
-           (join [{:host "localhost" :port 4444}]))
-
-         (with-node "node-3"
-           (start {:atomix-port 4446
-                   :name "node-3"
-                   :data-dir "/tmp/node-3"})
+           (conf/load-local "sample/node-1.edn")
+           (start (conf/local))
            (bootstrap))
+
+
+         (with-node "node-2"
+           (conf/load-local "sample/node-2.edn")
+           (start (conf/local))
+           (join [{:host "127.0.0.1" :port 4444}]))
+
+         (with-node "node-3"
+           (conf/load-local "sample/node-3.edn")
+           (start (conf/local))
+           (join [{:host "127.0.0.1" :port 4444}]))
+
+         (dvar-set "test" {:a 1} 10)
+
+         (dvar! "test")
+
+         (with-node "node-2"
+           (future (log/info "VAL:"
+                             (dvar! "test"))))
 
          (status)
          (leader)

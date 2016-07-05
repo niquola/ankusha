@@ -25,9 +25,8 @@
     (ax/dvar-set "config" gcfg)
     (pg/master gcfg lcfg)
     (ax/dmap-put "nodes" (:lcl/name lcfg) lcfg)
-    (ax/dvar-set "master" lcfg)
-    (start-services gcfg lcfg)
-    ))
+    (ax/dvar-set "master" lcfg (* 2 (get-in gcfg [:glb/failover :tx/timeout])))
+    (start-services gcfg lcfg)))
 
 
 (defn parse-addrs [addrs]
@@ -68,10 +67,6 @@
 (defn -main [] )
 
 (comment
-  (web/start (config/local))
-
-  (web/stop)
-
   (do
     (sh/sh "rm" "-rf" "/tmp/wallogs")
     (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")

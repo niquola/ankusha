@@ -10,6 +10,7 @@
                  [io.atomix.catalyst/catalyst-netty "1.1.1"]
                  [org.clojure/tools.logging "0.3.1"]
                  [ch.qos.logback/logback-classic "1.1.7"]
+                 [com.github.sbtourist/journalio "1.4.2"]
                  [honeysql "0.7.0"]]
 
   :repositories [["sonatype-nexus-snapshots" {:url "https://oss.sonatype.org/content/repositories/snapshots"}]]

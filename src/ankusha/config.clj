@@ -45,8 +45,6 @@
   (state/get-in [:global-config]))
 
 
-(defn get-local [])
-
 (comment
 
   (load-local "sample/node-1.edn")
