@@ -47,6 +47,10 @@
       (ax/dmap-put "nodes" (:lcl/name lcfg) lcfg)
       (start-services gcfg lcfg))))
 
+(defn reload-global-config [global-config-path]
+  (let [gcfg (config/load-global global-config-path)]
+    (ax/dvar-set "config" gcfg)))
+
 (defn stop []
   (let [lcfg (config/local)]
     (pg/stop lcfg)
@@ -80,7 +84,15 @@
 
   (state/with-node "node-3" (bootstrap-replica "sample/node-3.edn" "127.0.0.1:4444"))
 
-  (config/load-global "sample/config.edn")
+  (reload-global-config "sample/config.edn")
+
+  (with-node "node-2"
+    (health/start
+     (ax/dvar! "config")
+     (config/local)))
+
+  (with-node "node-2"
+    (health/stop))
 
   (failover/stop)
 

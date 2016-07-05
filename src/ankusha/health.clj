@@ -1,6 +1,8 @@
 (ns ankusha.health
   (:require [ankusha.state :as state :refer [with-node]]
             [clojure.tools.logging :as log]
+            [ankusha.config :as conf]
+            [ankusha.atomix.core :as ax]
             [ankusha.util :as util]
             [ankusha.config :as conf]
             [ankusha.atomix.core :as ax]
@@ -28,7 +30,7 @@
               :sql v
               :result (str (sql/query-value conn v))}
              (catch Exception e
-               (log/error "Health check:" e)
+               (log/error "Health check:" (str e))
                {:status :fail
                 :sql v
                 :error (str e)}))
@@ -44,7 +46,11 @@
   (util/start-checker
    :health
    #(get-in gcfg [:glb/health :tx/timeout])
-   #(health-checks gcfg lcfg)))
+   (fn []
+     (let [gcfg (ax/dvar! "config")
+           lcfg (conf/local)]
+       (when (and gcfg lcfg)
+         (health-checks gcfg lcfg))))))
 
 
 (comment
