@@ -29,4 +29,5 @@
    (fn [] (get-in gcfg [:glb/failover :tx/timeout]))
    (fn [] (log/info "Failover check"))))
 
-(comment)
+(comment
+  )
