@@ -138,6 +138,7 @@
   (String. (pr-str v)))
 
 (defn decode [s]
+  (println s)
   (edn/read-string s))
 
 (defn dmap [map-name]

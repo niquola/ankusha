@@ -80,6 +80,10 @@
 
   (state/with-node "node-3" (bootstrap-replica "sample/node-3.edn" "127.0.0.1:4444"))
 
+  (config/load-global "sample/config.edn")
+
+  (failover/stop)
+
   (state/with-node "node-3"
     (ax/shutdown)
     (pg/pg_ctl (config/local) :stop))

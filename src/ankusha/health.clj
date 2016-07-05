@@ -5,6 +5,7 @@
             [ankusha.config :as conf]
             [ankusha.atomix.core :as ax]
             [ankusha.pg.core :as pg]
+            [ankusha.pg.query :as sql]
             [clojure.core.async :as a :refer [>! <! go-loop alt! chan close! timeout]]))
 
 (def health-check-timeout (atom 3000))
@@ -13,25 +14,52 @@
                      :snapshot "SELECT txid_current_snapshot()"
                      :transaction-id "SELECT txid_current()"}))
 
+
+(defn health-checks [gcfg lcfg]
+  (sql/with-connection gcfg lcfg
+    (fn [conn]
+      (->>
+       (get-in gcfg [:glb/health :chk/master])
+       (reduce
+        (fn [acc [k v]]
+          (->>
+           (try
+             {:status :ok
+              :sql v
+              :result (str (sql/query-value conn v))}
+             (catch Exception e
+               (log/error "Health check:" e)
+               {:status :fail
+                :sql v
+                :error (str e)}))
+           (assoc acc k ))) {})
+       (merge {:ts (str (java.time.Instant/now))})
+       (ax/dmap-put "nodes-health" (:lcl/name lcfg))))))
+
 (defn stop []
   (util/stop-checker :health))
 
 (defn start [gcfg lcfg]
+  (log/info "Start health checks for " (:lcl/name lcfg))
   (util/start-checker
    :health
-   (fn [] (get-in gcfg [:glb/health :tx/timeout]))
-   (fn []
-     (let [res (reduce (fn [acc [k v]] (assoc acc k (pg/psql lcfg v))) {}
-                       (get-in gcfg [:glb/health :chk/master]))]
-       (ax/dmap-put "nodes-health"
-                    (:lcl/name lcfg)
-                    (assoc res :ts (str (java.time.Instant/now))))))))
+   #(get-in gcfg [:glb/health :tx/timeout])
+   #(health-checks gcfg lcfg)))
 
 
 (comment
   (start)
-  (state/current)
   (stop)
+
+  (ax/dmap! "nodes-health")
+
+  (require '[ankusha.config :as conf])
+
+
+  (health-checks
+   (conf/load-global "sample/config.edn")
+   (conf/load-local "sample/node-1.edn"))
+
 
   (with-node "node-2" (start))
   (with-node "node-3" (start))

@@ -5,7 +5,7 @@
             ["host"  "all" "all" "0.0.0.0/0" "md5"]]
       :failover {:tx/timeout 5000}
       :recovery {:tx/timeout 30}
-      :health   {:tx/timeout 3000
+      :health   {:tx/timeout 30
                  :chk/master {:simple-read "SELECT 1"
                               :snapshot "SELECT txid_current_snapshot()"
                               :transaction-id "SELECT txid_current()"}
