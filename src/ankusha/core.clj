@@ -74,59 +74,42 @@
 (defn -main [])
 
 (comment
+  
+
   (do
-    (pg/pg_ctl "/tmp/node-1/pg" :stop "-m" "fast")
-    (pg/pg_ctl "/tmp/node-2/pg" :stop "-m" "fast")
-    (pg/pg_ctl "/tmp/node-3/pg" :stop "-m" "fast")
-    (sh/sh "rm" "-rf" "/tmp/wallogs")
-    (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
-    (sh/sh "rm" "-rf" "/tmp/node-1")
-    (sh/sh "rm" "-rf" "/tmp/node-2")
-    (sh/sh "rm" "-rf" "/tmp/node-3"))
+    (do
+      (pg/pg_ctl "/tmp/node-1/pg" :stop "-m" "fast")
+      (pg/pg_ctl "/tmp/node-2/pg" :stop "-m" "fast")
+      (pg/pg_ctl "/tmp/node-3/pg" :stop "-m" "fast")
+      (sh/sh "rm" "-rf" "/tmp/wallogs")
+      (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
+      (sh/sh "rm" "-rf" "/tmp/node-1")
+      (sh/sh "rm" "-rf" "/tmp/node-2")
+      (sh/sh "rm" "-rf" "/tmp/node-3")
+      )
 
+    (state/with-node "node-1"
+      (boot  "sample/node-1.edn" {:state :bootstrap :global-config "sample/config.edn"}))
 
-  (state/with-node "node-1"
-    (boot  "sample/node-1.edn" {:state :bootstrap :global-config "sample/config.edn"}))
+    (state/with-node "node-2"
+      (boot "sample/node-2.edn" {:state :new :join "127.0.0.1:4444"}))
 
-  (state/with-node "node-2"
-    (boot "sample/node-2.edn" {:state :new :join "127.0.0.1:4444"}))
+    (state/with-node "node-3"
+      (boot "sample/node-3.edn" {:state :new :join "127.0.0.1:4444"}))
+    )
 
-  (state/with-node "node-3"
-    (boot "sample/node-3.edn" {:state :new :join "127.0.0.1:4444"}))
-
-  (reload-global-config "sample/config.edn")
-
-
-  (state/with-node "node-2" (stop))
-
-  (postgresql-conf (config/global) (config/local))
-  (pg-master (config/global) (config/local) {})
-
-  (ax/dvar-set "master" nil)
   (ax/dvar! "master")
+  (ax/dvar-set "master" nil)
 
+  (state/with-node "node-1" (lifebit/stop))
   (state/with-node "node-1" (lifebit/start 3000))
 
-  (state/with-node "node-2" (stop))
-  (state/with-node "node-3" (stop))
 
-
-  (state/with-node "node-1" (lifebit/start  3000))
+  (state/with-node "node-2" (lifebit/stop))
   (state/with-node "node-2" (lifebit/start 3000))
-  (state/with-node "node-3" (lifebit/start 3000))
+
   (state/with-node "node-3" (lifebit/stop))
+  (state/with-node "node-3" (lifebit/start 3000))
 
-  (state/with-node "node-2"
-    (let [gcfg (ax/dvar! "config")
-          mcfg (ax/dvar! "master")
-          lcfg (config/local)]
-      (pg/switch gcfg mcfg lcfg)))
-
-
-
-  (ax/status)
-  (ax/shutdown)
-  (ax/leader)
-  (pg/pid)
   )
 

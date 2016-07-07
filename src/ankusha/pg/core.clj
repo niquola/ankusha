@@ -57,10 +57,11 @@
     (if (> n 0)
       (let [res (psql data-dir port (or sql "SELECT 1"))]
         (when (not (= 0 (:exit res)))
-          (Thread/sleep 1000)
+          (Thread/sleep (* 1000 (Math/pow 2 (- sec n))))
           (recur (dec n))))
       (throw (Exception. (str "Unable to connect to postgres")))))
   (log/info "postgresql is up"))
+
 
 (defn multiline [s]
   (->> #"\n"

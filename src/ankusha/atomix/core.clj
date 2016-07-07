@@ -184,6 +184,7 @@
 (defn duration [sec]
   (java.time.Duration/ofSeconds sec))
 
+
 (defn dvar-set
   ([var-nm v]
    (when-let [val (dvar var-nm)]
@@ -201,13 +202,18 @@
   (let [lock (dlock lock-nm)]
     (-> lock .unlock .join)))
 
-(defn dlock-try
-  ([lock-nm]
-   (let [lock (dlock lock-nm)]
-     (-> lock .tryLock .get)))
-  ([lock-nm ttl]
-   (let [lock (dlock lock-nm)]
-     (-> lock (.tryLock (duration ttl)) .get))))
+
+(defmacro dlock-try
+  "macro to acquire lock, which release lock at the end of body or by exception"
+  [lock-nm & body]
+  `(let [lock# (dlock ~lock-nm)]
+    (when (-> lock# .tryLock .get)
+      (try ~@body
+           (catch Exception e#
+             (log/error "Error in lock" (str "[" ~lock-nm "]") e#)
+             (throw e#))
+           (finally
+             (-> lock# .unlock .join))))))
 
 
 (comment "rep1"
@@ -241,8 +247,9 @@
          (dlock "test-lock")
          (dlock-release "test-lock")
 
-         (dlock-try "test-lock" 2)
-
+         (dlock-try "test-lock"
+                    (throw (Exception. "Ups")) 
+                    :ok)
 
          (with-node "node-2"
            (future (log/info "VAL:"

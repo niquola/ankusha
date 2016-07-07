@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
             [clojure.java.shell :as sh]
+            [ankusha.log :as log]
             [ankusha.state :as state]
             [ankusha.util :as util])
   (:import
@@ -25,6 +26,7 @@
     (.close jrn)))
 
 (defn write [entry]
+  (log/info entry)
   (if-let [jrn (get-journal)]
     (.write jrn (.getBytes (encode (assoc entry :ts (util/now)))) Journal$WriteType/SYNC)
     (throw (Exception. "Journal not initialized"))))
