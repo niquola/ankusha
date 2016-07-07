@@ -1,6 +1,6 @@
 (ns ankusha.util
   (:require [clojure.core.async :as a :refer [>! <! go-loop alt! chan close! timeout]]
-            [clojure.tools.logging :as log]
+            [ankusha.log :as log]
             [ankusha.state :as state]))
 
 (defn stop-checker [nm]
@@ -32,3 +32,6 @@
                           (.. instance getClass getSuperclass getDeclaredFields)))
        (.setAccessible true))
      (get instance)))
+
+(defn now []
+  (str (java.time.Instant/now)))

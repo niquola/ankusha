@@ -2,7 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
             [clojure.java.shell :as sh]
-            [ankusha.state :as state])
+            [ankusha.state :as state]
+            [ankusha.util :as util])
   (:import
    (journal.io.api JournalBuilder Journal Journal$WriteType Journal$ReadType)))
 
@@ -25,7 +26,7 @@
 
 (defn write [entry]
   (if-let [jrn (get-journal)]
-    (.write jrn (.getBytes (encode entry)) Journal$WriteType/SYNC)
+    (.write jrn (.getBytes (encode (assoc entry :ts (util/now)))) Journal$WriteType/SYNC)
     (throw (Exception. "Journal not initialized"))))
 
 (defn jreduce [f acc]

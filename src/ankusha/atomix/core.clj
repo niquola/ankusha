@@ -1,5 +1,5 @@
 (ns ankusha.atomix.core
-  (:require [clojure.tools.logging :as log]
+  (:require [ankusha.log :as log]
             [ankusha.util :refer [xmethods get-private-field get-super-private-field]]
             [clojure.spec :as s]
             [clojure.edn :as edn]
@@ -33,7 +33,7 @@
 
 (defn- replica ^AtomixReplica
   [{data-dir :lcl/data-dir {port :ax/port} :lcl/atomix host :lcl/host :as cfg}]
-  (log/info "Init replica at " (str  host ":" port))
+  (log/info "Init replica")
   (sh/sh "mkdir" "-p" data-dir)
   (-> (AtomixReplica/builder (addr {:host host :port port}))
       (.withTransport (NettyTransport.))
@@ -98,8 +98,18 @@
 (defn bootstrap []
   (-> (get-replica) .bootstrap .get))
 
+(defn shutdown []
+  (if-let [repl (get-replica)]
+    (try
+      (log/info "SHUTDOWN" )
+      (.join (.shutdown repl))
+      (catch Exception e
+        (log/error e)))
+    (log/error "No replica")))
+
 (defn start [lcfg]
-  (log/info "Starting replica" lcfg)
+  (log/info "Starting replica")
+  (shutdown)
   (let [repl (replica lcfg)]
     (subscribe repl)
     (on-join repl)
@@ -116,14 +126,6 @@
     (.join (.leave repl))
     (log/info "No current replica")))
 
-(defn shutdown []
-  (if-let [repl (get-replica)]
-    (try
-      (log/info "SHUTDOWN" )
-      (.join (.shutdown repl))
-         (catch Exception e
-           (log/error e)))
-    (log/error "No replica")))
 
 (defn leader []
   (when-let [rep (get-replica)]
@@ -179,15 +181,33 @@
     (when-let [ev (.join (.get val))]
       (decode ev))))
 
+(defn duration [sec]
+  (java.time.Duration/ofSeconds sec))
+
 (defn dvar-set
   ([var-nm v]
    (when-let [val (dvar var-nm)]
      (.join (.set val (encode v)))))
   ([var-nm v ttl]
     (when-let [val (dvar var-nm)]
-      (.join (.set val (encode v) (java.time.Duration/ofSeconds ttl))))))
+      (.join (.set val (encode v) (duration ttl))))))
 
+(defn dlock [lock-nm]
+  (-> (get-replica)
+      (.getLock lock-nm)
+      .join))
 
+(defn dlock-release [lock-nm]
+  (let [lock (dlock lock-nm)]
+    (-> lock .unlock .join)))
+
+(defn dlock-try
+  ([lock-nm]
+   (let [lock (dlock lock-nm)]
+     (-> lock .tryLock .get)))
+  ([lock-nm ttl]
+   (let [lock (dlock lock-nm)]
+     (-> lock (.tryLock (duration ttl)) .get))))
 
 
 (comment "rep1"
@@ -218,10 +238,19 @@
 
          (dvar! "test")
 
+         (dlock "test-lock")
+         (dlock-release "test-lock")
+
+         (dlock-try "test-lock" 2)
+
+
          (with-node "node-2"
            (future (log/info "VAL:"
                              (dvar! "test"))))
 
          (status)
          (leader)
+
+
+
          )

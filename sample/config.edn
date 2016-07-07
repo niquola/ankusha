@@ -1,20 +1,15 @@
-#:glb{:users {:usr/replication #:usr{:password "secret"}}
-      :hba [["local" "all" "all" "trust"]
-            ["local" "replication" "replication" "trust"]
-            ["host"  "replication" "replication" "0.0.0.0/0" "md5"]
-            ["host"  "all" "all" "0.0.0.0/0" "md5"]]
-      :failover {:tx/timeout 10000}
+#:glb{:users []
+
+      :hba   [["host"  "all" "all" "0.0.0.0/0" "md5"]]
+
       :recovery {:tx/timeout 600000}
-      :health   {:tx/timeout 3000
-                 :chk/master {:simple-read "SELECT 1"
-                              :snapshot "SELECT txid_current_snapshot()"}
-                 :chk/replica {:simple-read "SELECT 1"
-                               :snapshot "SELECT txid_current_snapshot()"}}
+
+      :lifebit   {:tx/timeout 3000
+                  :master  {:simple-read "SELECT 1"
+                            :snapshot "SELECT txid_current_snapshot()"}
+                  :replica {:simple-read "SELECT 1"
+                            :snapshot "SELECT txid_current_snapshot()"}}
       :postgres #:pg{:max_connections 100
-                     :listen_addresses "*"
-                     :wal_level "logical"
-                     :hot_standby "on"
-                     :archive_mode "on"
                      :archive_timeout 60
                      :max_wal_senders 10
                      :wal_keep_segments 100
