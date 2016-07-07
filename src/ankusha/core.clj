@@ -74,28 +74,26 @@
 (defn -main [])
 
 (comment
-  
+  (do
+    (pg/pg_ctl "/tmp/node-1/pg" :stop "-m" "fast")
+    (pg/pg_ctl "/tmp/node-2/pg" :stop "-m" "fast")
+    (pg/pg_ctl "/tmp/node-3/pg" :stop "-m" "fast")
+    (sh/sh "rm" "-rf" "/tmp/wallogs")
+    (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
+    (sh/sh "rm" "-rf" "/tmp/node-1")
+    (sh/sh "rm" "-rf" "/tmp/node-2")
+    (sh/sh "rm" "-rf" "/tmp/node-3"))
 
   (do
-    (do
-      (pg/pg_ctl "/tmp/node-1/pg" :stop "-m" "fast")
-      (pg/pg_ctl "/tmp/node-2/pg" :stop "-m" "fast")
-      (pg/pg_ctl "/tmp/node-3/pg" :stop "-m" "fast")
-      (sh/sh "rm" "-rf" "/tmp/wallogs")
-      (sh/sh "mkdir" "-p" "/tmp/wallogs/pg_xlog")
-      (sh/sh "rm" "-rf" "/tmp/node-1")
-      (sh/sh "rm" "-rf" "/tmp/node-2")
-      (sh/sh "rm" "-rf" "/tmp/node-3")
-      )
-
     (state/with-node "node-1"
-      (boot  "sample/node-1.edn" {:state :bootstrap :global-config "sample/config.edn"}))
+      (future
+        (boot  "sample/node-1.edn" {:state :bootstrap :global-config "sample/config.edn"})))
 
     (state/with-node "node-2"
-      (boot "sample/node-2.edn" {:state :new :join "127.0.0.1:4444"}))
+      (future (boot "sample/node-2.edn" {:state :new :join "127.0.0.1:4444"})))
 
     (state/with-node "node-3"
-      (boot "sample/node-3.edn" {:state :new :join "127.0.0.1:4444"}))
+      (future (boot "sample/node-3.edn" {:state :new :join "127.0.0.1:4444"})))
     )
 
   (ax/dvar! "master")
@@ -110,6 +108,10 @@
 
   (state/with-node "node-3" (lifebit/stop))
   (state/with-node "node-3" (lifebit/start 3000))
+
+  
+  (doseq [n ["node-1" "node-2" "node-3"]]
+    (state/with-node n (stop)))
 
   )
 

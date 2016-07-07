@@ -36,6 +36,5 @@
      :host "localhost"
      :port 5432}
     (fn [conn]
-      (query-value conn "select 1")))
-
+      (query-value conn "select 1"))) 
   )
